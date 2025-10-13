@@ -1,0 +1,16 @@
+{
+  "name": "Lurk",
+  "short_name": "Lurk",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111",
+  "theme_color": "#111",
+  "description": "Ephemeral anonymous imageboard with live chat.",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

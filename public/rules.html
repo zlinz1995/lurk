@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lurk — Rules</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="header">
+    <img src="/favicon.png" alt="Lurk logo" class="logo" />
+    <h1>Rules</h1>
+    <p class="tagline">Keep it friendly and safe.</p>
+  </header>
+
+  <main>
+    <section class="card" aria-labelledby="rules-title" style="text-align:left">
+      <h2 id="rules-title">Community Guidelines</h2>
+      <ol style="line-height:1.6">
+        <li>No illegal content or harassment.</li>
+        <li>Respect privacy; no doxxing.</li>
+        <li>Mark sensitive content appropriately.</li>
+        <li>Don’t spam or flood threads.</li>
+        <li>Follow local laws and platform terms.</li>
+      </ol>
+      <p style="margin-top:18px"><a href="/" style="text-decoration:underline">Back to Home</a></p>
+    </section>
+  </main>
+
+  <nav class="bottom-nav">
+    <a href="/" aria-label="Home" title="Home">
+      <svg class="icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 11l9-8 9 8"/>
+        <path d="M5 10v10h14V10"/>
+        <path d="M9 20v-6h6v6"/>
+      </svg>
+      <span class="sr-only">Home</span>
+    </a>
+    <a href="/news.html" aria-label="News" title="News">
+      <svg class="icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4.5" width="14" height="15" rx="2"/>
+        <path d="M7 8.5h6"/>
+        <path d="M7 12h8"/>
+        <path d="M7 15.5h8"/>
+        <path d="M21 7v9.5a2.5 2.5 0 0 1-2.5 2.5H17"/>
+      </svg>
+      <span class="sr-only">News</span>
+    </a>
+    <a href="/blog.html" aria-label="Blog" title="Blog">
+      <svg class="icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M16.5 3.5l4 4L10 18H6v-4z"/>
+        <path d="M14 5.5l4 4"/>
+        <path d="M6 18h4"/>
+      </svg>
+      <span class="sr-only">Blog</span>
+    </a>
+    <a href="/faq.html" aria-label="FAQ" title="FAQ">
+      <svg class="icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M9.5 9a3 3 0 1 1 3.5 2.9c-.7.2-1 1-.9 1.6"/>
+        <circle cx="12" cy="17" r=".9" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="sr-only">FAQ</span>
+    </a>
+    <a href="/rules.html" aria-label="Rules" title="Rules">
+      <svg class="icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 7l7 7"/>
+        <path d="M14 6l4 4"/>
+        <rect x="3" y="16" width="8" height="3" rx="1.5"/>
+        <path d="M9 11l-6 6"/>
+      </svg>
+      <span class="sr-only">Rules</span>
+    </a>
+    <button class="nav-ellipsis" aria-label="Toggle menu" title="Toggle menu">...</button>
+  </nav>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/main.js"></script>
+</body>
+</html>
+

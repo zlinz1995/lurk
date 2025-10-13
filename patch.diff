@@ -1,0 +1,62 @@
+*** Begin Patch
+*** Update File: public/main.js
+@@
+-    // Optional image
++    // Optional image
+     if (thread.image) {
+       const imgEl = document.createElement("img");
+       // `thread.image` is already a full path like "/uploads/<file>"
+       imgEl.src = thread.image;
+       imgEl.alt = "thread image";
+       imgEl.classList.add("thread-image");
+ 
+       if (thread.sensitive) {
+         const wrap = document.createElement('div');
+         wrap.className = 'thread-image-wrap sensitive';
+         imgEl.classList.add('blurred');
+ 
+         const mask = document.createElement('button');
+         mask.type = 'button';
+         mask.className = 'sensitive-mask';
+         mask.setAttribute('aria-pressed', 'false');
+         mask.title = 'Sensitive image — click to reveal';
+         mask.textContent = 'Sensitive — Click to reveal';
+ 
+         mask.addEventListener('click', () => {
+           const nowReveal = !wrap.classList.contains('revealed');
+           wrap.classList.toggle('revealed', nowReveal);
+           imgEl.classList.toggle('blurred', !nowReveal);
+           mask.setAttribute('aria-pressed', String(nowReveal));
+           mask.textContent = nowReveal ? 'Hide again' : 'Sensitive — Click to reveal';
+         });
+ 
+-        imgEl.addEventListener("click", () => openImageFullscreen(imgEl.src));
++        attachInlineZoom(imgEl);
+         wrap.append(imgEl, mask);
+         threadDiv.append(wrap);
+       } else {
+-        imgEl.addEventListener("click", () => openImageFullscreen(imgEl.src));
++        attachInlineZoom(imgEl);
+         threadDiv.append(imgEl);
+       }
+     }
+@@
+-  // ---- Fullscreen Image Viewer ----
+-  function openImageFullscreen(src) {
+-    const overlay = document.createElement("div");
+-    overlay.classList.add("image-overlay");
+-    overlay.innerHTML = `<img src="${src}" alt="Full view">`;
+-    overlay.addEventListener("click", () => overlay.remove());
+-    document.body.appendChild(overlay);
+-  }
++  // ---- Inline Image Zoom (within thread card) ----
++  function attachInlineZoom(img) {
++    try {
++      img.style.cursor = 'zoom-in';
++      img.addEventListener('click', () => {
++        const expanded = img.classList.toggle('expanded');
++        img.style.cursor = expanded ? 'zoom-out' : 'zoom-in';
++      });
++    } catch {}
++  }
+*** End Patch
