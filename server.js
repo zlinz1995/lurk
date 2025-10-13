@@ -85,6 +85,7 @@ function rateLimit({ key, windowMs, limit, blockMs = 15000 }) {
 const limitCreateThread = rateLimit({ key: "thread:create", windowMs: 60_000, limit: 5, blockMs: 60_000 });
 const limitAddReply    = rateLimit({ key: "reply:add",   windowMs: 60_000, limit: 20, blockMs: 45_000 });
 const limitReact       = rateLimit({ key: "react:add",   windowMs: 60_000, limit: 60, blockMs: 30_000 });
+const limitReport      = rateLimit({ key: "report:add",  windowMs: 60_000, limit: 10, blockMs: 60_000 });
 
 // Next top-of-hour timestamp (ms) for countdown
 function nextHourTs() {
@@ -153,6 +154,34 @@ app.post("/threads/:id/react", limitReact, (req, res) => {
   thread.reactions[emoji] = (thread.reactions[emoji] || 0) + 1;
   res.json({ reactions: thread.reactions });
   try { io.emit("reaction:update", { threadId: id, reactions: thread.reactions }); } catch {}
+});
+
+// --- Anonymous abuse reports ---
+const reportsDir = path.join(__dirname, "reports");
+try { fs.mkdirSync(reportsDir, { recursive: true }); } catch {}
+const reportsLog = path.join(reportsDir, "reports.log");
+
+app.post("/reports", limitReport, (req, res) => {
+  try {
+    const { reason, details, threadId, replyId } = req.body || {};
+    const allowed = ["abuse", "harassment", "spam", "nsfw", "illegal", "other"];
+    const r = (reason || "other").toString().toLowerCase();
+    const reasonValid = allowed.includes(r) ? r : "other";
+    const text = (details || "").toString().slice(0, 2000);
+    const report = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      reason: reasonValid,
+      details: text,
+      threadId: typeof threadId === 'string' || typeof threadId === 'number' ? Number(threadId) : null,
+      replyId: typeof replyId === 'string' || typeof replyId === 'number' ? Number(replyId) : null,
+      ua: (req.headers['user-agent'] || '').toString().slice(0, 300),
+    };
+    fs.appendFile(reportsLog, JSON.stringify(report) + "\n", () => {});
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: "Invalid report" });
+  }
 });
 
 // --- Hourly purge ---

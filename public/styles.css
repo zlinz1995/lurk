@@ -581,6 +581,12 @@ main {
 .reply-form textarea { width: 100%; border: none; border-radius: 8px; padding: 8px; background: rgba(255,255,255,0.08); color: #fff; }
 .reply-form button { justify-self: start; background: #008cff; color: #fff; border: none; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
 
+/* Anonymous report form (thread/reply) */
+.report-form { display: grid; gap: 6px; margin-top: 8px; }
+.report-form.hidden { display: none; }
+.report-form textarea, .report-form select { width: 100%; border: none; border-radius: 8px; padding: 8px; background: rgba(255,255,255,0.08); color: #fff; }
+.report-form button { justify-self: start; background: #ff5777; color: #fff; border: none; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+
 /* ---- Emoji reactions ---- */
 .reactions {
   display: flex;

@@ -568,6 +568,12 @@ if (threadForm) {
     replyBtn.className = "reply-toggle";
     replyBtn.textContent = "Reply";
 
+    // Report button
+    const reportBtn = document.createElement('button');
+    reportBtn.type = 'button';
+    reportBtn.className = 'reply-toggle';
+    reportBtn.textContent = 'Report';
+
     const repliesWrap = document.createElement("div");
     repliesWrap.className = "replies";
 
@@ -589,7 +595,7 @@ if (threadForm) {
       repliesList.appendChild(rEl);
     }
 
-    // Form
+    // Reply form
     const replyForm = document.createElement("form");
     replyForm.className = "reply-form hidden";
     replyForm.innerHTML = `
@@ -620,8 +626,53 @@ if (threadForm) {
       }
     });
 
+    // Report form (anonymous)
+    const reportForm = document.createElement('form');
+    reportForm.className = 'report-form hidden';
+    reportForm.innerHTML = `
+      <label class="sr-only" for="report-reason-${thread.id}">Reason</label>
+      <select id="report-reason-${thread.id}" name="reason">
+        <option value="abuse">Abuse</option>
+        <option value="harassment">Harassment</option>
+        <option value="spam">Spam</option>
+        <option value="nsfw">NSFW / mislabeled</option>
+        <option value="illegal">Illegal content</option>
+        <option value="other">Other</option>
+      </select>
+      <textarea name="details" rows="2" maxlength="2000" placeholder="Optional details (no personal info)"></textarea>
+      <button type="submit">Send Report</button>
+    `;
+
+    reportBtn.addEventListener('click', () => {
+      reportForm.classList.toggle('hidden');
+    });
+
+    reportForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const formData = new FormData(reportForm);
+        const body = {
+          reason: formData.get('reason') || 'other',
+          details: formData.get('details') || '',
+          threadId: thread.id
+        };
+        const res = await fetch('/reports', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error('Report failed');
+        reportForm.classList.add('hidden');
+        // lightweight confirmation via chat feed
+        try { socket?.emit('chat message', '[system] Report submitted. Thank you.'); } catch {}
+      } catch (err) {
+        console.error('Error sending report', err);
+      }
+    });
+
     actionsRow.appendChild(replyBtn);
-    repliesWrap.append(repliesList, replyForm);
+    actionsRow.appendChild(reportBtn);
+    repliesWrap.append(repliesList, replyForm, reportForm);
 
     // Initial collapsed state from localStorage (optional)
     try {
