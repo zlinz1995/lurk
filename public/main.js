@@ -67,6 +67,20 @@ document.addEventListener("DOMContentLoaded", () => {
   if (window.chatInitialized) return;
   window.chatInitialized = true;
 
+  // ---- Auto-scroll nav to reveal Report once ----
+  try {
+    const seenKey = 'lurk:scrolledReport';
+    if (!sessionStorage.getItem(seenKey) && bottomNav) {
+      const reportLink = bottomNav.querySelector('a[aria-label="Report"], a[title="Report"], a[href="/report"]');
+      if (reportLink && typeof reportLink.scrollIntoView === 'function') {
+        setTimeout(() => {
+          try { reportLink.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' }); } catch {}
+        }, 200);
+        sessionStorage.setItem(seenKey, '1');
+      }
+    }
+  } catch {}
+
   // ---- Chat toggle behaviour ----
   if (chatBox && chatBubble && chatToggle) {
     // Start minimized by default

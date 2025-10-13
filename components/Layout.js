@@ -44,15 +44,6 @@ export default function Layout({ title = 'Lurk', subtitle, children }) {
           </svg>
           <span className="sr-only">FAQ</span>
         </Link>
-        <Link href="/report" aria-label="Report" title="Report">
-          <svg className="icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M4 3v18"/>
-            <path d="M5 4h10l-2 3 2 3H5z"/>
-            <circle cx="18" cy="17" r="2"/>
-            <path d="M18 15v-2"/>
-          </svg>
-          <span className="sr-only">Report</span>
-        </Link>
         <Link href="/rules" aria-label="Rules" title="Rules">
           <svg className="icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M9 7l7 7"/>
@@ -61,6 +52,15 @@ export default function Layout({ title = 'Lurk', subtitle, children }) {
             <path d="M9 11l-6 6"/>
           </svg>
           <span className="sr-only">Rules</span>
+        </Link>
+        <Link href="/report" aria-label="Report" title="Report">
+          <svg className="icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 3v18"/>
+            <path d="M5 4h10l-2 3 2 3H5z"/>
+            <circle cx="18" cy="17" r="2"/>
+            <path d="M18 15v-2"/>
+          </svg>
+          <span className="sr-only">Report</span>
         </Link>
         <button className="nav-ellipsis" aria-label="Toggle menu" title="Toggle menu">...</button>
       </nav>
