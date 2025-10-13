@@ -9,6 +9,40 @@ document.addEventListener("DOMContentLoaded", () => {
   console.log("[Lurk] Frontend loaded");
   setupAudioPriming();
 
+  // Ensure chat UI exists on every page
+  (function ensureChatElements() {
+    try {
+      if (!document.getElementById("chat-box")) {
+        const chat = document.createElement("section");
+        chat.className = "chat";
+        chat.id = "chat-box";
+        chat.setAttribute("aria-label", "Live Chat");
+        chat.innerHTML = `
+          <header class="chat-header">
+            <span><strong>Live Chat</strong></span>
+            <span id="chat-status" class="muted">connecting…</span>
+            <button id="chat-toggle" class="chat-toggle" title="Minimize chat">--</button>
+          </header>
+          <div id="chat-body" class="chat-body">
+            <div id="chat-messages" class="chat-messages"></div>
+            <form id="chat-form" class="chat-form" autocomplete="off">
+              <input id="chat-input" name="text" maxlength="500" placeholder="Type a message…" />
+              <button type="submit">Send</button>
+            </form>
+          </div>
+        `;
+        document.body.appendChild(chat);
+      }
+      if (!document.getElementById("chat-bubble")) {
+        const bubble = document.createElement("button");
+        bubble.id = "chat-bubble";
+        bubble.title = "Open chat";
+        bubble.textContent = "💬";
+        document.body.appendChild(bubble);
+      }
+    } catch {}
+  })();
+
   // ----------- Chat Elements -----------
   const chatBox = document.getElementById("chat-box");
   const chatBubble = document.getElementById("chat-bubble");

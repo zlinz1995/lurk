@@ -3,11 +3,14 @@
 "name": "image-board",
 "version": "1.2.0",
 "description": "Minimal image board (threads + replies) with anonymous live chat.",
-"main": "server.js",
-"scripts": {
-"start": "node server.js",
-"dev": "nodemon server.js"
-},
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
 "dependencies": {
 "better-sqlite3": "^9.4.0",
 "express": "^5.0.0",
