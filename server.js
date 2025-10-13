@@ -86,6 +86,7 @@ app.post("/threads", upload.single("image"), (req, res) => {
   };
   threads.unshift(newThread);
   res.json(newThread);
+  try { io.emit("thread:new", newThread); } catch {}
 });
 
 // Add a reply to a thread
@@ -105,6 +106,7 @@ app.post("/threads/:id/replies", (req, res) => {
   if (!Array.isArray(thread.replies)) thread.replies = [];
   thread.replies.push(reply);
   res.json(reply);
+  try { io.emit("reply:new", { threadId: id, reply }); } catch {}
 });
 
 // React to a thread (emoji pulse)
@@ -120,6 +122,7 @@ app.post("/threads/:id/react", (req, res) => {
   if (!thread.reactions) thread.reactions = Object.fromEntries(allowed.map((e) => [e, 0]));
   thread.reactions[emoji] = (thread.reactions[emoji] || 0) + 1;
   res.json({ reactions: thread.reactions });
+  try { io.emit("reaction:update", { threadId: id, reactions: thread.reactions }); } catch {}
 });
 
 // --- Auto-purge old threads (hourly) ---

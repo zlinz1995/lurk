@@ -58,6 +58,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const nsfwToggle = document.getElementById('nsfw-toggle');
   const sensitiveHidden = document.getElementById('sensitive');
   const previewImg = document.getElementById('image-preview-img');
+  // Inline blog chat elements
+  const blogChatMessages = document.getElementById("blog-chat-messages");
+  const blogChatForm = document.getElementById("blog-chat-form");
+  const blogChatInput = document.getElementById("blog-chat-input");
 
   // Prevent double event listeners if script reloads
   if (window.chatInitialized) return;
@@ -79,7 +83,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ---- Chat Socket Events ----
-  if (socket && chatMessages && chatStatus) {
+  if (socket && chatStatus) {
     socket.on("connect", () => {
       chatStatus.textContent = "• online";
       chatStatus.style.color = "#0f0";
@@ -93,24 +97,31 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     socket.on("chatMessage", (msg) => {
-      const el = document.createElement("div");
-      if (typeof msg === "string") {
-        el.textContent = msg;
-      } else {
-        el.textContent = `[${msg.time ?? ""}] ${msg.user ?? ""}: ${msg.text ?? ""}`.trim();
-        const t = (msg.text || "").toLowerCase();
-        if (t.endsWith("joined")) playChatChime("join");
-        if (t.endsWith("left")) playChatChime("leave");
-      }
-      chatMessages.appendChild(el);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+      const render = (container, m) => {
+        if (!container) return;
+        const el = document.createElement("div");
+        if (typeof m === "string") el.textContent = m;
+        else el.textContent = `[${m.time ?? ""}] ${m.user ?? ""}: ${m.text ?? ""}`.trim();
+        container.appendChild(el);
+        container.scrollTop = container.scrollHeight;
+      };
+      render(chatMessages, msg);
+      render(blogChatMessages, msg);
+      const t = (msg?.text || String(msg || "")).toLowerCase();
+      if (t.endsWith("joined")) playChatChime("join");
+      if (t.endsWith("left")) playChatChime("leave");
     });
 
     socket.on("chat message", (msg) => {
-      const el = document.createElement("div");
-      el.textContent = String(msg);
-      chatMessages.appendChild(el);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+      const add = (container) => {
+        if (!container) return;
+        const el = document.createElement("div");
+        el.textContent = String(msg);
+        container.appendChild(el);
+        container.scrollTop = container.scrollHeight;
+      };
+      add(chatMessages);
+      add(blogChatMessages);
       const lower = String(msg).toLowerCase();
       if (lower.endsWith("joined")) playChatChime("join");
       else if (lower.endsWith("left")) playChatChime("leave");
@@ -124,6 +135,14 @@ document.addEventListener("DOMContentLoaded", () => {
       socket.emit("chat message", text);
       socket.emit("chatMessage", { text });
       chatInput.value = "";
+    });
+    blogChatForm?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = blogChatInput.value.trim();
+      if (!text) return;
+      socket.emit("chat message", text);
+      socket.emit("chatMessage", { text });
+      blogChatInput.value = "";
     });
   }
 
@@ -560,6 +579,7 @@ if (threadForm) {
     function addReplyEl(r) {
       const rEl = document.createElement("div");
       rEl.className = "reply";
+      if (r.id) rEl.setAttribute('data-reply-id', String(r.id));
       const t = document.createElement("div");
       t.className = "reply-time";
       t.textContent = new Date(r.timestamp).toLocaleString();
@@ -614,6 +634,54 @@ if (threadForm) {
     // Small particle glow when created
     spawnCreationBurst(threadDiv);
   }
+
+  // ---- Real-time updates via Socket.IO ----
+  try {
+    if (socket) {
+      // New thread created anywhere
+      socket.on('thread:new', (t) => {
+        try {
+          if (!threadsContainer) return;
+          if (!document.querySelector(`[data-id="${t.id}"]`)) addThreadToDOM(t);
+        } catch {}
+      });
+
+      // New reply for a thread
+      socket.on('reply:new', ({ threadId, reply }) => {
+        try {
+          const threadEl = document.querySelector(`[data-id="${threadId}"]`);
+          if (!threadEl) return;
+          const list = threadEl.querySelector('.replies-list');
+          if (!list) return;
+          if (list.querySelector(`[data-reply-id="${reply.id}"]`)) return;
+          const rEl = document.createElement('div');
+          rEl.className = 'reply';
+          if (reply.id) rEl.setAttribute('data-reply-id', String(reply.id));
+          const t = document.createElement('div');
+          t.className = 'reply-time';
+          t.textContent = new Date(reply.timestamp).toLocaleString();
+          const p = document.createElement('p');
+          p.textContent = reply.text;
+          rEl.append(t, p);
+          list.appendChild(rEl);
+        } catch {}
+      });
+
+      // Reaction counts updated
+      socket.on('reaction:update', ({ threadId, reactions }) => {
+        try {
+          const threadEl = document.querySelector(`[data-id="${threadId}"]`);
+          if (!threadEl) return;
+          threadEl.querySelectorAll('.react-btn').forEach((btn) => {
+            const em = btn.dataset.emoji;
+            const count = reactions?.[em];
+            const span = btn.querySelector('.count');
+            if (span && typeof count === 'number') span.textContent = count;
+          });
+        } catch {}
+      });
+    }
+  } catch {}
 
   // ---- Inline Image Zoom (within thread card) ----
   function attachInlineZoom(img) {

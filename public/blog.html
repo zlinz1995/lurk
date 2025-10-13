@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lurk — Blog</title>
+  <title>Lurk Blog</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
@@ -18,6 +18,19 @@
     <section class="card" aria-labelledby="blog-title">
       <h2 id="blog-title">Latest Posts</h2>
       <p class="muted">Nothing here yet — check back soon.</p>
+
+      <div class="blog-suggest" style="margin-top:22px; text-align:left;">
+        <h3 style="margin:0 0 6px;">Share a Thought</h3>
+        <p class="muted" style="margin:0 0 12px;">Suggestions, tips, questions — drop them below.</p>
+        <div id="blog-chat" class="blog-chat">
+          <div id="blog-chat-messages" class="chat-messages" aria-live="polite" aria-relevant="additions"></div>
+          <form id="blog-chat-form" class="chat-form" autocomplete="off">
+            <input id="blog-chat-input" name="text" maxlength="500" placeholder="Write a suggestion, tip, or question..." />
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </div>
+
       <p style="margin-top:18px"><a href="/" style="text-decoration:underline">Back to Home</a></p>
     </section>
   </main>
@@ -73,4 +86,3 @@
   <script src="/main.js"></script>
 </body>
 </html>
-
