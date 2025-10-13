@@ -247,15 +247,40 @@ if (threadForm) {
     const setActive = (el) => {
       links.forEach((a) => a.classList.toggle('active', a === el));
     };
-    // Default first link active on load
-    if (links.length) setActive(links[0]);
+
+    // Determine active link based on current path
+    const normalizePath = (p) => {
+      try {
+        if (!p) return '/';
+        // Strip query/hash and normalize index.html to '/'
+        p = p.split('#')[0].split('?')[0];
+        if (p.endsWith('/index.html')) p = p.replace(/\/index\.html$/, '/');
+        if (p === '') p = '/';
+        return p;
+      } catch { return '/'; }
+    };
+    const currentPath = normalizePath(window.location.pathname);
+    let matched = null;
+    links.forEach((a) => {
+      try {
+        const href = a.getAttribute('href') || '#';
+        if (href === '#') return;
+        const path = normalizePath(new URL(href, window.location.origin).pathname);
+        if (path === currentPath) matched = a;
+      } catch {}
+    });
+    if (matched) setActive(matched); else if (links.length) setActive(links[0]);
+
+    // Keep UI responsive when clicking non-navigating anchors
     links.forEach((a) => {
       a.addEventListener('click', (e) => {
-        // For demo anchors, prevent jump
-        if (a.getAttribute('href') === '#') e.preventDefault();
-        setActive(a);
+        if (a.getAttribute('href') === '#') {
+          e.preventDefault();
+          setActive(a);
+        }
       });
     });
+
     // Collapse toggle (ellipsis on the right)
     if (navEllipsis) {
       navEllipsis.addEventListener('click', () => {
