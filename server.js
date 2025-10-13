@@ -5,6 +5,7 @@ import http from "http";
 import https from "https";
 import { fileURLToPath } from "url";
 import multer from "multer";
+import next from "next";
 import { Server } from "socket.io";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -24,8 +25,7 @@ try {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Static
-app.use("/", express.static(path.join(__dirname, "public")));
+// Do not mount public/ at "/" here — Next serves from its own public/.
 
 // Security headers
 app.use((req, res, next) => {
@@ -98,6 +98,13 @@ app.get("/threads", (req, res) => {
   res.json(threads);
 });
 
+// Legacy static paths -> Next routes
+app.get(["/index.html"], (req, res) => res.redirect(301, "/"));
+app.get(["/blog.html"], (req, res) => res.redirect(301, "/blog"));
+app.get(["/news.html"], (req, res) => res.redirect(301, "/news"));
+app.get(["/faq.html"], (req, res) => res.redirect(301, "/faq"));
+app.get(["/rules.html"], (req, res) => res.redirect(301, "/rules"));
+
 app.post("/threads", limitCreateThread, upload.single("image"), (req, res) => {
   const { title, body } = req.body;
   const sensitive = (() => {
@@ -167,15 +174,53 @@ app.use((err, req, res, next) => {
 // Health check
 app.get("/healthz", (req, res) => res.status(200).send("ok"));
 
+// --- Next.js integration ---
+const dev = process.env.NODE_ENV !== "production";
+const nextApp = next({ dev, dir: path.join(__dirname) });
+await nextApp.prepare();
+
 // --- Server + Socket.IO ---
 const useHttps = process.env.NODE_ENV !== "production" && credentials;
 const server = useHttps ? https.createServer(credentials, app) : http.createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] }, path: "/socket.io" });
 
+// Anonymous username pool
+const NAME_PREFIX = "ghost";
+const NAME_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const nameRegistry = new Map(); // name -> { inUse: boolean, reservedUntil: number }
+const socketToName = new Map(); // socket.id -> name
+function randomGhostName() {
+  const suffix = Math.random().toString(36).slice(2, 10); // 8 chars
+  return `${NAME_PREFIX}${suffix}`;
+}
+function assignName() {
+  const now = Date.now();
+  for (let i = 0; i < 50; i++) {
+    const candidate = randomGhostName();
+    const rec = nameRegistry.get(candidate);
+    if (!rec || (!rec.inUse && now > rec.reservedUntil)) {
+      nameRegistry.set(candidate, { inUse: true, reservedUntil: now + NAME_TTL_MS });
+      return candidate;
+    }
+  }
+  const fallback = `${NAME_PREFIX}${Date.now().toString(36).slice(-8)}`;
+  nameRegistry.set(fallback, { inUse: true, reservedUntil: Date.now() + NAME_TTL_MS });
+  return fallback;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [name, rec] of nameRegistry) {
+    if (!rec.inUse && now > rec.reservedUntil) nameRegistry.delete(name);
+  }
+}, 15 * 60 * 1000);
+
 io.on("connection", (socket) => {
-  const user = "Anonymous";
+  const user = assignName();
+  socketToName.set(socket.id, user);
   socket.emit("chat message", `Welcome, ${user}!`);
+  socket.emit("chatMessage", { user: "system", time: new Date().toLocaleTimeString(), text: `You are ${user}` });
   socket.broadcast.emit("chat message", `${user} joined`);
+  socket.broadcast.emit("chatMessage", { user: "system", time: new Date().toLocaleTimeString(), text: `${user} joined` });
 
   // Token bucket: 5 burst, refill 1/sec
   const bucket = { tokens: 5, last: Date.now() };
@@ -191,16 +236,28 @@ io.on("connection", (socket) => {
 
   socket.on("chat message", (msg) => {
     if (!allow()) return socket.emit("chat message", "[system] Slow down: too many messages.");
-    io.emit("chat message", msg);
+    const text = String(msg || "").slice(0, 500);
+    const payload = { user, text, time: new Date().toLocaleTimeString() };
+    io.emit("chatMessage", payload);
+    io.emit("chat message", `${user}: ${text}`);
+    const rec = nameRegistry.get(user);
+    if (rec) rec.reservedUntil = Date.now() + NAME_TTL_MS; // refresh TTL on activity
   });
 
   socket.on("disconnect", () => {
     io.emit("chat message", `${user} left`);
+    io.emit("chatMessage", { user: "system", time: new Date().toLocaleTimeString(), text: `${user} left` });
+    const rec = nameRegistry.get(user);
+    if (rec) rec.inUse = false, rec.reservedUntil = Date.now() + NAME_TTL_MS;
+    socketToName.delete(socket.id);
   });
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Lurk running on port ${PORT}`);
-});
+// Let Next handle everything else after our API routes
+const handle = nextApp.getRequestHandler();
+app.all("*", (req, res) => handle(req, res));
 
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Lurk (Next.js) running on port ${PORT}`);
+});
