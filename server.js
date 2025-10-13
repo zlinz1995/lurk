@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import http from "http";
 import https from "https";
 import { fileURLToPath } from "url";
 import multer from "multer";
@@ -10,10 +11,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 
-// --- SSL setup (mkcert certs) ---
-const key = fs.readFileSync(path.join(__dirname, "certs", "localhost-key.pem"));
-const cert = fs.readFileSync(path.join(__dirname, "certs", "localhost.pem"));
-const credentials = { key, cert };
+// --- SSL setup (development only) ---
+// In production (e.g., Render), TLS terminates at the edge and the app
+// should listen over plain HTTP on PORT. For local dev, if certs exist,
+// use HTTPS; otherwise fall back to HTTP.
+let credentials = null;
+try {
+  const key = fs.readFileSync(path.join(__dirname, "certs", "localhost-key.pem"));
+  const cert = fs.readFileSync(path.join(__dirname, "certs", "localhost.pem"));
+  credentials = { key, cert };
+} catch {}
 
 // --- Middleware ---
 app.use(express.json());
@@ -21,7 +28,6 @@ app.use(express.urlencoded({ extended: true }));
 
 // Serve static folders
 app.use("/", express.static(path.join(__dirname, "public")));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // --- Security headers (fixed CSP) ---
 app.use((req, res, next) => {
@@ -35,9 +41,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- Multer setup for uploads ---
-const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+// --- Uploads directory (configurable) ---
+// Default to local "uploads" for dev; allow override via env for prod/disks.
+const uploadDir = process.env.UPLOAD_DIR
+  ? path.resolve(process.env.UPLOAD_DIR)
+  : path.join(__dirname, "uploads");
+try {
+  fs.mkdirSync(uploadDir, { recursive: true });
+} catch {}
+app.use("/uploads", express.static(uploadDir));
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -128,8 +140,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
-// --- Create HTTPS server ---
-const server = https.createServer(credentials, app);
+// --- Health check (used by Render) ---
+app.get("/healthz", (req, res) => res.status(200).send("ok"));
+
+// --- Create HTTP(S) server ---
+// Use plain HTTP in production (Render terminates TLS). In dev, prefer HTTPS
+// if certs were found, otherwise HTTP.
+const useHttps = process.env.NODE_ENV !== "production" && credentials;
+const server = useHttps ? https.createServer(credentials, app) : http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
   path: "/socket.io",
@@ -152,9 +170,9 @@ io.on("connection", (socket) => {
   });
 });
 
-
 // --- Start Server ---
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Lurk running on port ${PORT}`);
   console.log(`📱 Or on LAN: https://<your-local-IP>:${PORT}`);
