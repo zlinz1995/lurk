@@ -743,6 +743,14 @@ main {
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.06);
   z-index: 1200;
+  /* Allow horizontal scrolling when icons overflow */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;               /* Firefox */
+  scrollbar-color: rgba(220,235,255,0.35) transparent;
+  -webkit-overflow-scrolling: touch;   /* smooth on iOS */
+  scroll-snap-type: x proximity;
+  scrollbar-gutter: stable both-edges;
 }
 
 .bottom-nav a {
@@ -753,6 +761,8 @@ main {
   place-items: center;
   padding: 6px 6px 10px;
   transition: color 0.2s ease;
+  flex: 0 0 auto;         /* prevent shrinking so we can scroll */
+  scroll-snap-align: center;
 }
 .bottom-nav a:hover { color: #aee9ff; }
 
@@ -802,8 +812,17 @@ main {
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 10px;
   cursor: pointer;
+  flex: 0 0 auto;
 }
 .bottom-nav .nav-ellipsis:hover { opacity: 1; color: #e6f5ff; }
+
+/* Subtle custom scrollbar for the nav (WebKit) */
+.bottom-nav::-webkit-scrollbar { height: 6px; }
+.bottom-nav::-webkit-scrollbar-track { background: transparent; }
+.bottom-nav::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, rgba(0,200,255,0.45), rgba(120,120,255,0.4));
+  border-radius: 8px;
+}
 
 /* Auto-collapse chat on mobile */
 .chat.hidden {
