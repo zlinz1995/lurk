@@ -154,8 +154,8 @@ io.on("connection", (socket) => {
 
 
 // --- Start Server ---
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n🌐 Lurk running at: https://localhost:${PORT}`);
+  console.log(`✅ Lurk running on port ${PORT}`);
   console.log(`📱 Or on LAN: https://<your-local-IP>:${PORT}`);
 });
