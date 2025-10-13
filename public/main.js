@@ -429,7 +429,7 @@ if (threadForm) {
     meta.textContent = new Date(thread.timestamp).toLocaleString();
 
     // Time remaining indicator
-    const timer = buildThreadTimer(thread.timestamp);
+    const timer = buildThreadTimer(thread.timestamp, thread.expiry);
 
     // Collapsible controls (+ expand, = collapse)
     const controls = document.createElement('div');
@@ -633,6 +633,17 @@ if (threadForm) {
     threadsContainer.prepend(threadDiv);
     // Small particle glow when created
     spawnCreationBurst(threadDiv);
+
+    // Schedule local vanish to align with timer if expiry provided
+    try {
+      const end = typeof thread.expiry === 'number' ? thread.expiry : (new Date(thread.timestamp).getTime() + EXPIRY_MS);
+      const ms = Math.max(0, end - Date.now());
+      setTimeout(() => {
+        if (!threadDiv.isConnected) return;
+        threadDiv.classList.add('leaving');
+        threadDiv.addEventListener('animationend', () => threadDiv.remove(), { once: true });
+      }, ms + 50);
+    } catch {}
   }
 
   // ---- Real-time updates via Socket.IO ----
@@ -677,6 +688,19 @@ if (threadForm) {
             const count = reactions?.[em];
             const span = btn.querySelector('.count');
             if (span && typeof count === 'number') span.textContent = count;
+          });
+        } catch {}
+      });
+
+      // Hourly purge notification from server
+      socket.on('threads:purged', ({ ids }) => {
+        try {
+          if (!Array.isArray(ids)) return;
+          ids.forEach((id) => {
+            const el = document.querySelector(`[data-id="${id}"]`);
+            if (!el) return;
+            el.classList.add('leaving');
+            el.addEventListener('animationend', () => el.remove(), { once: true });
           });
         } catch {}
       });
@@ -814,9 +838,10 @@ if (threadForm) {
   }
 
   // ---- Thread Timer Helpers ----
-  function buildThreadTimer(timestampISO) {
+  function buildThreadTimer(timestampISO, expiryEpoch) {
     const start = new Date(timestampISO).getTime();
-    const end = start + EXPIRY_MS;
+    const end = typeof expiryEpoch === 'number' ? expiryEpoch : (start + EXPIRY_MS);
+    const duration = Math.max(1, end - start);
     const wrap = document.createElement("div");
     wrap.className = "thread-timer";
     wrap.innerHTML = `<div class="bar"></div><span class="timer-text"></span>`;
@@ -828,7 +853,7 @@ if (threadForm) {
       const now = Date.now();
       let remaining = end - now;
       if (remaining < 0) remaining = 0;
-      const pct = Math.max(0, Math.min(1, remaining / EXPIRY_MS));
+      const pct = Math.max(0, Math.min(1, remaining / duration));
       bar.style.transform = `scaleX(${pct})`;
       label.textContent = formatRemaining(remaining);
       wrap.classList.toggle("low", pct <= 0.2);
