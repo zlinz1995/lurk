@@ -107,7 +107,17 @@ app.get(["/faq.html"], (req, res) => res.redirect(301, "/faq"));
 app.get(["/rules.html"], (req, res) => res.redirect(301, "/rules"));
 
 app.post("/threads", limitCreateThread, upload.single("image"), (req, res) => {
+  const ip = getIp(req);
+  if (isBanned(ip)) {
+    res.setHeader("Retry-After", String(Math.ceil(remainingBanMs(ip) / 1000)));
+    return res.status(403).json({ error: "Temporarily banned" });
+  }
   const { title, body } = req.body;
+  const hitCreate = matchKeyword(`${title || ""} ${body || ""}`);
+  if (hitCreate) {
+    imposeBan(ip, hitCreate);
+    return res.status(403).json({ error: "Temporarily banned" });
+  }
   const sensitive = (() => {
     const v = (req.body?.sensitive ?? "").toString().toLowerCase();
     return v === "on" || v === "true" || v === "1";
@@ -131,11 +141,21 @@ app.post("/threads", limitCreateThread, upload.single("image"), (req, res) => {
 });
 
 app.post("/threads/:id/replies", limitAddReply, (req, res) => {
+  const ip = getIp(req);
+  if (isBanned(ip)) {
+    res.setHeader("Retry-After", String(Math.ceil(remainingBanMs(ip) / 1000)));
+    return res.status(403).json({ error: "Temporarily banned" });
+  }
   const id = Number(req.params.id);
   const thread = threads.find((t) => t.id === id);
   if (!thread) return res.status(404).json({ error: "Thread not found" });
   const text = (req.body?.text || "").toString().slice(0, 2000);
   if (!text.trim()) return res.status(400).json({ error: "Empty reply" });
+  const hitReply = matchKeyword(text);
+  if (hitReply) {
+    imposeBan(ip, hitReply);
+    return res.status(403).json({ error: "Temporarily banned" });
+  }
   const reply = { id: Date.now(), text, timestamp: new Date().toISOString() };
   if (!Array.isArray(thread.replies)) thread.replies = [];
   thread.replies.push(reply);
@@ -243,6 +263,41 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
+// ---- Keyword-based temporary bans -------------------------
+const BASE_BAN_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_BAN_MS = 24 * 60 * 60 * 1000; // 24 hours cap
+const banMap = new Map(); // ip -> { until, strikes, reason }
+const RAW_KEYWORDS = (process.env.BAN_KEYWORDS || "abuse,harass,spam,phish,scam,hate").toLowerCase();
+const BAN_KEYWORDS = RAW_KEYWORDS.split(",").map((s) => s.trim()).filter(Boolean);
+
+function isBanned(ip) {
+  const b = banMap.get(ip);
+  if (!b) return false;
+  if (Date.now() > b.until) { banMap.delete(ip); return false; }
+  return true;
+}
+function imposeBan(ip, reason) {
+  const prev = banMap.get(ip);
+  const strikes = (prev?.strikes || 0) + 1;
+  const duration = Math.min(BASE_BAN_MS * Math.pow(2, strikes - 1), MAX_BAN_MS);
+  const until = Date.now() + duration;
+  banMap.set(ip, { until, strikes, reason });
+  try {
+    const dir = path.join(__dirname, "reports");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFile(path.join(dir, "bans.log"), JSON.stringify({ ip, reason, strikes, until, at: new Date().toISOString() }) + "\n", () => {});
+  } catch {}
+  return { duration, strikes, until };
+}
+function matchKeyword(text) {
+  const t = (text || "").toString().toLowerCase();
+  return BAN_KEYWORDS.find((kw) => kw && t.includes(kw));
+}
+function remainingBanMs(ip) {
+  const b = banMap.get(ip); return b ? Math.max(0, b.until - Date.now()) : 0;
+}
+setInterval(() => { for (const [ip, b] of banMap) if (Date.now() > b.until) banMap.delete(ip); }, 10 * 60 * 1000);
+
 io.on("connection", (socket) => {
   const user = assignName();
   socketToName.set(socket.id, user);
@@ -264,8 +319,20 @@ io.on("connection", (socket) => {
   };
 
   socket.on("chat message", (msg) => {
+    const ip = (socket.handshake.headers["x-forwarded-for"] || socket.handshake.address || "").toString().split(",")[0].trim();
+    if (isBanned(ip)) {
+      const secs = Math.ceil(remainingBanMs(ip) / 1000);
+      return socket.emit("chat message", `[system] You are temporarily banned. Retry in ${secs}s.`);
+    }
     if (!allow()) return socket.emit("chat message", "[system] Slow down: too many messages.");
     const text = String(msg || "").slice(0, 500);
+    const hit = matchKeyword(text);
+    if (hit) {
+      const { duration } = imposeBan(ip, hit);
+      socket.emit("chat message", `[system] Message blocked. Temporary ban for ${Math.ceil(duration/60000)} min.`);
+      try { socket.disconnect(true); } catch {}
+      return;
+    }
     const payload = { user, text, time: new Date().toLocaleTimeString() };
     io.emit("chatMessage", payload);
     io.emit("chat message", `${user}: ${text}`);
