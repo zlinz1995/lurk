@@ -1,4 +1,4 @@
-git add render.yamlservices:
+services:
   - type: web
     name: image-board
     env: node
