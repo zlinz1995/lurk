@@ -32,7 +32,10 @@ async function ensureSocket() {
 }
 
 // ---- DOM Ready ----
-document.addEventListener("DOMContentLoaded", async () => {
+// Next.js may load this script after DOMContentLoaded (e.g., with
+// strategy="afterInteractive"), so run immediately if the DOM is already
+// ready; otherwise wait for the event. Wrap in an init() to avoid missing it.
+async function init() {
   console.log("[Lurk] Frontend loaded");
   setupAudioPriming();
 
@@ -1010,4 +1013,11 @@ if (threadForm) {
     const s = totalSec % 60;
     return `${m}:${String(s).padStart(2, "0")}`;
   }
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init, { once: true });
+} else {
+  // DOMContentLoaded already fired; run now
+  init();
+}
