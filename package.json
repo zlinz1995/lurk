@@ -1,29 +1,30 @@
 {
   "type": "module",
   "name": "image-board",
-  "version": "1.2.0",
-  "description": "Minimal image board (threads + replies) with anonymous live chat.",
+  "version": "1.2.1",
+  "description": "Lurk — ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every hour.",
   "main": "server.js",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "node server.js"
+    "build": "next build --no-lint",
+    "start": "node server.js",
+    "prestart": "next build --no-lint"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.0",
-    "express": "^5.0.0",
+    "express": "^4.18.2",
     "helmet": "^7.0.0",
     "mime-types": "^2.1.35",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.0.0",
     "morgan": "^1.10.0",
-    "socket.io": "^4.7.5",
-    "uuid": "^9.0.1",
     "next": "^14.2.10",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "socket.io": "^4.7.5",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

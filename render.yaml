@@ -1,18 +1,10 @@
 services:
   - type: web
-    name: image-board
+    name: lurk
     env: node
     plan: free
-    buildCommand: npm ci
-    startCommand: npm start
-    healthCheckPath: /healthz
-    autoDeploy: true
+    buildCommand: npm run build
+    startCommand: npm run start
     envVars:
       - key: NODE_ENV
         value: production
-      - key: UPLOAD_DIR
-        value: /data/uploads
-    disk:
-      name: uploads
-      mountPath: /data/uploads
-      sizeGB: 1

@@ -7,7 +7,9 @@ export default function App({ Component, pageProps }) {
       <Head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.png" />
-        <title>Lurk</title>
+        <link rel="apple-touch-icon" href="/favicon.png" />
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#111111" />
         <link rel="stylesheet" href="/styles.css" />
       </Head>
       <Component {...pageProps} />
@@ -16,4 +18,3 @@ export default function App({ Component, pageProps }) {
     </>
   );
 }
-

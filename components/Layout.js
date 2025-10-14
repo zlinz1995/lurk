@@ -1,8 +1,10 @@
 import Link from 'next/link';
+import SEO from './SEO';
 
-export default function Layout({ title = 'Lurk', subtitle, children }) {
+export default function Layout({ title = 'Lurk', description, subtitle, children, noindex = false, ogImage, ogType }) {
   return (
     <>
+      <SEO title={title} description={description || subtitle} noindex={noindex} image={ogImage} type={ogType} />
       <header className="header">
         <img src="/favicon.png" alt="Lurk logo" className="logo" />
         <h1>{title}</h1>
