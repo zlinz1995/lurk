@@ -1,11 +1,38 @@
 // main.js
 
 // ---- Socket Setup ----
-const socket = io();
+let socket = null;
 var username = null;
 
+// If Socket.IO is not loaded (e.g., running Next dev without custom server),
+// lazily load the client and create the connection before binding handlers.
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    try {
+      const s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error('failed to load '+src));
+      document.head.appendChild(s);
+    } catch (e) { reject(e); }
+  });
+}
+
+async function ensureSocket() {
+  if (typeof window !== 'undefined' && window.io) {
+    try { return window.io(); } catch { return null; }
+  }
+  try {
+    await loadScript('/socket.io/socket.io.js');
+    if (window.io) return window.io();
+  } catch {}
+  console.warn('[Lurk] Socket.IO client not available; chat disabled');
+  return null;
+}
+
 // ---- DOM Ready ----
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   console.log("[Lurk] Frontend loaded");
   setupAudioPriming();
 
@@ -191,6 +218,53 @@ document.addEventListener("DOMContentLoaded", () => {
   const scheduleDraftSave = () => { clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 300); };
   titleInput?.addEventListener("input", scheduleDraftSave);
   bodyInput?.addEventListener("input", scheduleDraftSave);
+
+  // If socket.io script wasn’t present, try to load and bind now.
+  try {
+    if (!socket) socket = await ensureSocket();
+    if (socket && chatStatus) {
+      // Basic bindings so chat works even if initial block skipped
+      socket.on("connect", () => { try { chatStatus.textContent = "… online"; chatStatus.style.color = "#0f0"; } catch {} });
+      socket.on("disconnect", () => { try { chatStatus.textContent = "… offline"; chatStatus.style.color = "#f00"; } catch {} });
+      socket.on("chatMessage", (msg) => {
+        const render = (container, m) => {
+          if (!container) return;
+          const el = document.createElement("div");
+          if (typeof m === "string") el.textContent = m;
+          else el.textContent = `[${m.time ?? ""}] ${m.user ?? ""}: ${m.text ?? ""}`.trim();
+          container.appendChild(el);
+          container.scrollTop = container.scrollHeight;
+        };
+        try { render(chatMessages, msg); render(blogChatMessages, msg); } catch {}
+      });
+      socket.on("chat message", (msg) => {
+        const add = (container) => {
+          if (!container) return;
+          const el = document.createElement("div");
+          el.textContent = String(msg);
+          container.appendChild(el);
+          container.scrollTop = container.scrollHeight;
+        };
+        try { add(chatMessages); add(blogChatMessages); } catch {}
+      });
+      chatForm?.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const text = chatInput.value.trim();
+        if (!text) return;
+        socket.emit("chat message", text);
+        socket.emit("chatMessage", { text });
+        chatInput.value = "";
+      });
+      blogChatForm?.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const text = blogChatInput.value.trim();
+        if (!text) return;
+        socket.emit("chat message", text);
+        socket.emit("chatMessage", { text });
+        blogChatInput.value = "";
+      });
+    }
+  } catch {}
 
 if (threadForm) {
     const submitBtn = threadForm.querySelector('button[type="submit"], button');
