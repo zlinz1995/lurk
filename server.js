@@ -231,7 +231,11 @@ await nextApp.prepare();
 // --- Server + Socket.IO ---
 const useHttps = process.env.NODE_ENV !== "production" && credentials;
 const server = useHttps ? https.createServer(credentials, app) : http.createServer(app);
-const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] }, path: "/socket.io" });
+const io = new Server(server, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
+  path: "/socket.io",
+  serveClient: true,
+});
 
 // Anonymous username pool
 const NAME_PREFIX = "ghost";

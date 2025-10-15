@@ -126,7 +126,20 @@ async function init() {
     chatToggle.addEventListener("click", toggleChat);
   }
 
-  // ---- Chat Socket Events ----
+  // ---- Chat Socket Initialization + Events ----
+  // Create the socket connection (if available) and wire up listeners.
+  if (!socket) {
+    try { socket = await ensureSocket(); } catch {}
+  }
+
+  if (!socket) {
+    // Could not load/connect Socket.IO client; show offline state.
+    if (chatStatus) {
+      chatStatus.textContent = "offline";
+      chatStatus.style.color = "#f00";
+    }
+  }
+
   if (socket && chatStatus) {
     socket.on("connect", () => {
       chatStatus.textContent = "• online";
