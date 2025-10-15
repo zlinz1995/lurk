@@ -2,16 +2,8 @@ import Layout from '../components/Layout';
 import { useEffect } from 'react';
 
 export default function ReportPage() {
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const threadId = params.get('thread');
-      if (threadId) {
-        const sel = document.getElementById('report-thread-id');
-        if (sel) sel.value = threadId;
-      }
-    } catch {}
-  }, []);
+  // No prefill logic needed since Thread ID field is removed
+  useEffect(() => {}, []);
 
   return (
     <Layout title="Report" subtitle="Flag abuse or misconduct anonymously">
@@ -25,7 +17,6 @@ export default function ReportPage() {
           const payload = {
             reason: data.get('reason') || 'other',
             details: data.get('details') || '',
-            threadId: data.get('threadId') || '',
           };
           try {
             const res = await fetch('/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -47,12 +38,9 @@ export default function ReportPage() {
           </select>
           <label htmlFor="report-details">Details (optional)</label>
           <textarea id="report-details" name="details" rows={3} maxLength={2000} placeholder="Describe the issue"></textarea>
-          <label htmlFor="report-thread-id">Thread ID (optional)</label>
-          <input id="report-thread-id" name="threadId" placeholder="e.g., 1697136000000" />
           <button type="submit">Submit Report</button>
         </form>
       </section>
     </Layout>
   );
-}
-
+} 

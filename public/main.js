@@ -50,7 +50,7 @@ async function init() {
         chat.innerHTML = `
           <header class="chat-header">
             <span><strong>Live Chat</strong></span>
-            <span id="chat-status" class="muted">connecting…</span>
+            <span id="chat-status" class="muted">Connecting</span>
             <button id="chat-toggle" class="chat-toggle" title="Minimize chat">--</button>
           </header>
           <div id="chat-body" class="chat-body">
@@ -81,6 +81,8 @@ async function init() {
   const chatForm = document.getElementById("chat-form");
   const chatInput = document.getElementById("chat-input");
   const chatStatus = document.getElementById("chat-status");
+  // Normalize initial status label
+  if (chatStatus) { chatStatus.textContent = "Connecting"; }
   const bottomNav = document.querySelector('.bottom-nav');
   const navEllipsis = document.querySelector('.bottom-nav .nav-ellipsis');
   const threadSubmitBtn = document.querySelector('#thread-form button[type="submit"], #thread-form button');
@@ -135,20 +137,20 @@ async function init() {
   if (!socket) {
     // Could not load/connect Socket.IO client; show offline state.
     if (chatStatus) {
-      chatStatus.textContent = "offline";
+      chatStatus.textContent = "Offline";
       chatStatus.style.color = "#f00";
     }
   }
 
   if (socket && chatStatus) {
     socket.on("connect", () => {
-      chatStatus.textContent = "• online";
+      chatStatus.textContent = "Online";
       chatStatus.style.color = "#0f0";
       console.log("[Chat] Connected");
     });
 
     socket.on("disconnect", () => {
-      chatStatus.textContent = "• offline";
+      chatStatus.textContent = "Offline";
       chatStatus.style.color = "#f00";
       console.log("[Chat] Disconnected");
     });
@@ -156,9 +158,25 @@ async function init() {
     socket.on("chatMessage", (msg) => {
       const render = (container, m) => {
         if (!container) return;
+        const toText = (mm) => (typeof mm === "string") ? String(mm) : `[${mm.time ?? ""}] ${mm.user ?? ""}: ${mm.text ?? ""}`.trim();
+        const finalText = toText(m);
+        if (container === blogChatMessages) {
+          try {
+            const incoming = (typeof m === "string") ? String(m) : String(m.text || "");
+            const candidates = Array.from(container.querySelectorAll('div[data-optimistic="1"]'));
+            for (let i = candidates.length - 1; i >= 0; i--) {
+              const el = candidates[i];
+              if ((el.dataset.text || "") === incoming) {
+                el.dataset.optimistic = "0";
+                el.textContent = finalText;
+                container.scrollTop = container.scrollHeight;
+                return;
+              }
+            }
+          } catch {}
+        }
         const el = document.createElement("div");
-        if (typeof m === "string") el.textContent = m;
-        else el.textContent = `[${m.time ?? ""}] ${m.user ?? ""}: ${m.text ?? ""}`.trim();
+        el.textContent = finalText;
         container.appendChild(el);
         container.scrollTop = container.scrollHeight;
       };
@@ -199,8 +217,24 @@ async function init() {
       if (!text) return;
       socket.emit("chat message", text);
       socket.emit("chatMessage", { text });
+      try {
+        if (blogChatMessages) {
+          const el = document.createElement("div");
+          el.textContent = text;
+          el.setAttribute('data-optimistic', '1');
+          el.setAttribute('data-text', text);
+          blogChatMessages.appendChild(el);
+          blogChatMessages.scrollTop = blogChatMessages.scrollHeight;
+        }
+      } catch {}
       blogChatInput.value = "";
     });
+
+    // Ensure clean status labels without leading dots
+    try {
+      socket.on("connect", () => { if (chatStatus) { chatStatus.textContent = "Online"; chatStatus.style.color = "#0f0"; } });
+      socket.on("disconnect", () => { if (chatStatus) { chatStatus.textContent = "Offline"; chatStatus.style.color = "#f00"; } });
+    } catch {}
   }
 
   // ----------- Threads -----------
@@ -240,8 +274,8 @@ async function init() {
     if (!socket) socket = await ensureSocket();
     if (socket && chatStatus) {
       // Basic bindings so chat works even if initial block skipped
-      socket.on("connect", () => { try { chatStatus.textContent = "… online"; chatStatus.style.color = "#0f0"; } catch {} });
-      socket.on("disconnect", () => { try { chatStatus.textContent = "… offline"; chatStatus.style.color = "#f00"; } catch {} });
+      socket.on("connect", () => { try { chatStatus.textContent = "Online"; chatStatus.style.color = "#0f0"; } catch {} });
+      socket.on("disconnect", () => { try { chatStatus.textContent = "Offline"; chatStatus.style.color = "#f00"; } catch {} });
       socket.on("chatMessage", (msg) => {
         const render = (container, m) => {
           if (!container) return;
@@ -282,7 +316,16 @@ async function init() {
     }
   } catch {}
 
-if (threadForm) {
+  // Final normalization of status text and events
+  try {
+    if (socket && chatStatus) {
+      chatStatus.textContent = socket.connected ? "Online" : "Offline";
+      socket.on("connect", () => { chatStatus.textContent = "Online"; chatStatus.style.color = "#0f0"; });
+      socket.on("disconnect", () => { chatStatus.textContent = "Offline"; chatStatus.style.color = "#f00"; });
+    }
+  } catch {}
+
+ if (threadForm) {
     const submitBtn = threadForm.querySelector('button[type="submit"], button');
 
     // ---- NSFW toggle logic ----

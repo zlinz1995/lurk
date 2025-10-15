@@ -584,7 +584,32 @@ main {
 /* Anonymous report form (thread/reply) */
 .report-form { display: grid; gap: 6px; margin-top: 8px; }
 .report-form.hidden { display: none; }
-.report-form textarea, .report-form select { width: 100%; border: none; border-radius: 8px; padding: 8px; background: rgba(255,255,255,0.08); color: #fff; }
+.report-form textarea,
+.report-form select {
+  width: 100%;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--glass-hi-1), var(--glass-hi-2)), var(--glass-bg);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* Improve native select appearance to match the frosted UI */
+.report-form select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+}
+
+/* Dropdown list styling support (best-effort across browsers) */
+.report-form select option, .report-form select optgroup {
+  background: rgba(18, 24, 38, 0.92);
+  color: #e8e8e8;
+}
 .report-form button { justify-self: start; background: #ff5777; color: #fff; border: none; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
 
 /* ---- Emoji reactions ---- */
