@@ -353,7 +353,10 @@ io.on("connection", (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8080;  
+  server.listen(PORT, () => {
+  console.log("User disconnected:", socket.id);
+    });
 // Let Next handle everything else after our API routes
 const handle = nextApp.getRequestHandler();
 app.all("*", (req, res) => handle(req, res));
