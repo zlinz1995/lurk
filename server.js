@@ -31,8 +31,8 @@ try {
       });
     });
 
-    // --- NEXT.JS PAGE HANDLER ---
-    expressApp.all("/*", (req, res) => {
+    // --- NEXT.JS HANDLER (REGEX FIX FOR EXPRESS v5) ---
+    expressApp.all(/.*/, (req, res) => {
       try {
         return handle(req, res);
       } catch (err) {
