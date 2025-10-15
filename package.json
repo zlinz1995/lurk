@@ -4,11 +4,11 @@
   "version": "1.2.1",
   "description": "Lurk — ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every hour.",
   "main": "server.js",
-  "scripts": {
-    "dev": "node server.js",
-    "build": "next build",
-    "start": "node server.js"
-  },
+"scripts": {
+  "dev": "next dev",
+  "build": "next build",
+  "start": "node server.js"
+},
   "engines": {
     "node": ">=20"
   },
