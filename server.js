@@ -1,3 +1,4 @@
+// server.js
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -12,20 +13,35 @@ try {
     const expressApp = express();
     const server = http.createServer(expressApp);
 
-    // --- Socket.IO ---
+    // --- SOCKET.IO SETUP ---
     const io = new Server(server, {
-      cors: { origin: "*", methods: ["GET", "POST"] },
+      cors: {
+        origin: "*",
+        methods: ["GET", "POST"],
+      },
     });
 
     io.on("connection", (socket) => {
       console.log("✅ User connected:", socket.id);
-      socket.on("disconnect", () => console.log("❌ User disconnected:", socket.id));
+      socket.on("chat message", (msg) => {
+        io.emit("chat message", msg);
+      });
+      socket.on("disconnect", () => {
+        console.log("❌ User disconnected:", socket.id);
+      });
     });
 
-    // --- Let Next.js handle all routes ---
-    expressApp.all("*", (req, res) => handle(req, res));
+    // --- NEXT.JS PAGE HANDLER ---
+    expressApp.all("/*", (req, res) => {
+      try {
+        return handle(req, res);
+      } catch (err) {
+        console.error("❌ Route handling error:", err);
+        res.status(500).send("Server error");
+      }
+    });
 
-    // --- Bind to Render's assigned port ---
+    // --- PORT CONFIGURATION ---
     const PORT = process.env.PORT || 8080;
     server.listen(PORT, "0.0.0.0", () => {
       console.log(`🚀 Lurk running on port ${PORT}`);
