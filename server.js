@@ -353,14 +353,12 @@ io.on("connection", (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 8080;  
-  server.listen(PORT, () => {
-  console.log("User disconnected:", socket.id);
-    });
 // Let Next handle everything else after our API routes
 const handle = nextApp.getRequestHandler();
 app.all("*", (req, res) => handle(req, res));
 
+// Start the HTTP server (single listen)
+const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Lurk (Next.js) running on port ${PORT}`);
 });
