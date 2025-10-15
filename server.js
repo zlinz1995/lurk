@@ -54,6 +54,10 @@ const upload = multer({ storage });
 // --- Data store (in-memory) ---
 let threads = [];
 
+const THREAD_REACTIONS = ["👍", "❤️", "😂", "😮", "🔥"];
+const createReactionCounters = () =>
+  Object.fromEntries(THREAD_REACTIONS.map((emoji) => [emoji, 0]));
+
 // --- Rate limiter (per IP) ---
 const rateBuckets = new Map();
 function getIp(req) {
@@ -122,8 +126,7 @@ app.post("/threads", limitCreateThread, upload.single("image"), (req, res) => {
     const v = (req.body?.sensitive ?? "").toString().toLowerCase();
     return v === "on" || v === "true" || v === "1";
   })();
-  const allowed = ["dY`?", "�?\u000f�,?", "dY~,", "dY~r", "dY\"�"];
-  const reactions = Object.fromEntries(allowed.map((e) => [e, 0]));
+  const reactions = createReactionCounters();
   const newThread = {
     id: Date.now(),
     title: title || "Untitled",
@@ -167,10 +170,11 @@ app.post("/threads/:id/react", limitReact, (req, res) => {
   const id = Number(req.params.id);
   const thread = threads.find((t) => t.id === id);
   if (!thread) return res.status(404).json({ error: "Thread not found" });
-  const allowed = ["dY`?", "�?\u000f�,?", "dY~,", "dY~r", "dY\"�"];
   const emoji = (req.body?.emoji || "").toString();
-  if (!allowed.includes(emoji)) return res.status(400).json({ error: "Invalid emoji" });
-  if (!thread.reactions) thread.reactions = Object.fromEntries(allowed.map((e) => [e, 0]));
+  if (!THREAD_REACTIONS.includes(emoji)) {
+    return res.status(400).json({ error: "Invalid emoji" });
+  }
+  if (!thread.reactions) thread.reactions = createReactionCounters();
   thread.reactions[emoji] = (thread.reactions[emoji] || 0) + 1;
   res.json({ reactions: thread.reactions });
   try { io.emit("reaction:update", { threadId: id, reactions: thread.reactions }); } catch {}
