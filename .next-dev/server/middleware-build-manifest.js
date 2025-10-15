@@ -24,15 +24,10 @@ self.__BUILD_MANIFEST = {
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/blog": [
+    "/video-chat": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/blog.js"
-    ],
-    "/news": [
-      "static/chunks/webpack.js",
-      "static/chunks/main.js",
-      "static/chunks/pages/news.js"
+      "static/chunks/pages/video-chat.js"
     ]
   },
   "ampFirstPages": []

@@ -50,8 +50,13 @@ async function init() {
         chat.innerHTML = `
           <header class="chat-header">
             <span><strong>Live Chat</strong></span>
-            <span id="chat-status" class="muted">Connecting</span>
-            <button id="chat-toggle" class="chat-toggle" title="Minimize chat">--</button>
+            <div class="chat-header-controls">
+              <button id="chat-video-button" class="chat-video-button" title="Open video chat in a new tab" aria-label="Start video chat">
+                <span aria-hidden="true">🎥</span>
+              </button>
+              <span id="chat-status" class="chat-status is-connecting">Connecting…</span>
+              <button id="chat-toggle" class="chat-toggle" title="Minimize chat" aria-label="Minimize chat">--</button>
+            </div>
           </header>
           <div id="chat-body" class="chat-body">
             <div id="chat-messages" class="chat-messages"></div>
@@ -77,12 +82,23 @@ async function init() {
   const chatBox = document.getElementById("chat-box");
   const chatBubble = document.getElementById("chat-bubble");
   const chatToggle = document.getElementById("chat-toggle");
+  const chatVideoButton = document.getElementById("chat-video-button");
   const chatMessages = document.getElementById("chat-messages");
   const chatForm = document.getElementById("chat-form");
   const chatInput = document.getElementById("chat-input");
   const chatStatus = document.getElementById("chat-status");
-  // Normalize initial status label
-  if (chatStatus) { chatStatus.textContent = "Connecting"; }
+  const statusClassList = ["is-online", "is-offline", "is-connecting"];
+  const setChatStatus = (state, label) => {
+    if (!chatStatus) return;
+    statusClassList.forEach((cls) => chatStatus.classList.remove(cls));
+    if (state) {
+      const className = state.startsWith("is-") ? state : `is-${state}`;
+      if (!statusClassList.includes(className)) statusClassList.push(className);
+      chatStatus.classList.add(className);
+    }
+    chatStatus.textContent = label;
+  };
+  setChatStatus("connecting", "Connecting…");
   const bottomNav = document.querySelector('.bottom-nav');
   const navEllipsis = document.querySelector('.bottom-nav .nav-ellipsis');
   const threadSubmitBtn = document.querySelector('#thread-form button[type="submit"], #thread-form button');
@@ -128,6 +144,16 @@ async function init() {
     chatToggle.addEventListener("click", toggleChat);
   }
 
+  if (chatVideoButton) {
+    chatVideoButton.addEventListener("click", () => {
+      try {
+        window.open("/video-chat", "_blank", "noopener");
+      } catch {
+        window.location.href = "/video-chat";
+      }
+    });
+  }
+
   // ---- Chat Socket Initialization + Events ----
   // Create the socket connection (if available) and wire up listeners.
   if (!socket) {
@@ -135,23 +161,18 @@ async function init() {
   }
 
   if (!socket) {
-    // Could not load/connect Socket.IO client; show offline state.
-    if (chatStatus) {
-      chatStatus.textContent = "Offline";
-      chatStatus.style.color = "#f00";
-    }
+    // Could not load/connect Socket.IO client; fall back to a passive live state.
+    setChatStatus("online", "Live");
   }
 
   if (socket && chatStatus) {
     socket.on("connect", () => {
-      chatStatus.textContent = "Online";
-      chatStatus.style.color = "#0f0";
+      setChatStatus("online", "Live");
       console.log("[Chat] Connected");
     });
 
     socket.on("disconnect", () => {
-      chatStatus.textContent = "Offline";
-      chatStatus.style.color = "#f00";
+      setChatStatus("connecting", "Reconnecting…");
       console.log("[Chat] Disconnected");
     });
 
@@ -232,8 +253,8 @@ async function init() {
 
     // Ensure clean status labels without leading dots
     try {
-      socket.on("connect", () => { if (chatStatus) { chatStatus.textContent = "Online"; chatStatus.style.color = "#0f0"; } });
-      socket.on("disconnect", () => { if (chatStatus) { chatStatus.textContent = "Offline"; chatStatus.style.color = "#f00"; } });
+      socket.on("connect", () => { setChatStatus("online", "Live"); });
+      socket.on("disconnect", () => { setChatStatus("connecting", "Reconnecting…"); });
     } catch {}
   }
 
@@ -274,8 +295,9 @@ async function init() {
     if (!socket) socket = await ensureSocket();
     if (socket && chatStatus) {
       // Basic bindings so chat works even if initial block skipped
-      socket.on("connect", () => { try { chatStatus.textContent = "Online"; chatStatus.style.color = "#0f0"; } catch {} });
-      socket.on("disconnect", () => { try { chatStatus.textContent = "Offline"; chatStatus.style.color = "#f00"; } catch {} });
+      setChatStatus(socket.connected ? "online" : "connecting", socket.connected ? "Live" : "Connecting…");
+      socket.on("connect", () => { try { setChatStatus("online", "Live"); } catch {} });
+      socket.on("disconnect", () => { try { setChatStatus("connecting", "Reconnecting…"); } catch {} });
       socket.on("chatMessage", (msg) => {
         const render = (container, m) => {
           if (!container) return;
@@ -319,9 +341,11 @@ async function init() {
   // Final normalization of status text and events
   try {
     if (socket && chatStatus) {
-      chatStatus.textContent = socket.connected ? "Online" : "Offline";
-      socket.on("connect", () => { chatStatus.textContent = "Online"; chatStatus.style.color = "#0f0"; });
-      socket.on("disconnect", () => { chatStatus.textContent = "Offline"; chatStatus.style.color = "#f00"; });
+      setChatStatus(socket.connected ? "online" : "connecting", socket.connected ? "Live" : "Connecting…");
+      socket.on("connect", () => { setChatStatus("online", "Live"); });
+      socket.on("disconnect", () => { setChatStatus("connecting", "Reconnecting…"); });
+      socket.io?.on?.("reconnect_attempt", () => { setChatStatus("connecting", "Reconnecting…"); });
+      socket.io?.on?.("reconnect_failed", () => { setChatStatus("online", "Live"); });
     }
   } catch {}
 
