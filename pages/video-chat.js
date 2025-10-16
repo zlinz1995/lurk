@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Layout from '../components/Layout';
+
+const ioPromise = import('socket.io-client');
+const VideoPlayer = dynamic(() => Promise.resolve(VideoPlayerInner), { ssr: false });
 
 const ROOM_ID = 'global-video-room';
 const ICE_SERVERS = [
@@ -82,7 +86,7 @@ export default function VideoChatPage() {
         }
         setConnectionStatus('Connecting to video room...');
 
-        const { io } = await import('socket.io-client');
+        const { io } = await ioPromise;
         if (!isMounted) return;
         const socket = io();
         socketRef.current = socket;
@@ -411,7 +415,7 @@ export default function VideoChatPage() {
   );
 }
 
-function VideoPlayer({ stream }) {
+function VideoPlayerInner({ stream }) {
   const ref = useRef(null);
 
   useEffect(() => {

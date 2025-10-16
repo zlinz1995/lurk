@@ -1,7 +1,1 @@
-{
-  "/_app": "pages/_app.js",
-  "/_error": "pages/_error.js",
-  "/_document": "pages/_document.js",
-  "/": "pages/index.js",
-  "/video-chat": "pages/video-chat.js"
-}
+{"/_app":"pages/_app.js","/blog":"pages/blog.html","/_error":"pages/_error.js","/faq":"pages/faq.html","/":"pages/index.html","/news":"pages/news.html","/report":"pages/report.html","/rules":"pages/rules.html","/video-chat":"pages/video-chat.html","/sitemap.xml":"pages/sitemap.xml.js","/robots.txt":"pages/robots.txt.js","/_document":"pages/_document.js","/404":"pages/404.html"}
