@@ -1360,7 +1360,22 @@ main {
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   padding: 16px 18px 18px;
 }
-.hero-head { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 4px; position: relative; }
+.hero-head {
+  display: grid;
+  grid-template-columns: 1fr auto; /* content + collapse */
+  grid-template-rows: auto auto;   /* logo over text */
+  grid-template-areas:
+    "logo collapse"
+    "text collapse";
+  align-items: center;
+  justify-items: center;
+  gap: 4px 10px;
+  margin-bottom: 4px;
+  position: relative;
+}
+.hero-card .logo { grid-area: logo; justify-self: center; }
+.hero-text { grid-area: text; text-align: center; }
+.hero-collapse { grid-area: collapse; }
 .hero-text { text-align: center; }
 .hero-title { font-size: 1.15rem; margin: 0; }
 .hero-sub { margin: 0; opacity: 0.8; font-size: 0.9rem; }
@@ -1374,7 +1389,7 @@ main {
 .hero-collapse:hover { background: rgba(255,255,255,0.15); }
 .hero-card.is-collapsed { padding: 10px 12px; }
 .hero-card.is-collapsed #thread-form { display: none; }
-.hero-card.is-collapsed .logo { width: 20px; height: 20px; }
+.hero-card.is-collapsed .logo { width: 20px; height: 20px; justify-self: center; }
 .hero-card.is-collapsed .hero-title { font-size: 1rem; }
 .hero-card.is-collapsed .hero-sub { font-size: 0.82rem; }
 
