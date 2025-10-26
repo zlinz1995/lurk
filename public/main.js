@@ -578,7 +578,8 @@ async function init() {
   // ---- Load existing threads ----
   async function loadThreads() {
     try {
-      const res = await fetch("/threads");
+      let res = await fetch("/threads");
+      if (!res.ok) { try { res = await fetch("/api/threads"); } catch {} }
       const data = await res.json();
       // Reconcile DOM with server data to allow enter/leave animations
       const dataIds = new Set(data.map((t) => t.id));
@@ -616,7 +617,8 @@ async function init() {
   async function loadMostViewed() {
     if (!mostViewedWrap) return;
     try {
-      const res = await fetch('/threads/most-viewed?limit=4');
+      let res = await fetch('/threads/most-viewed?limit=4');
+      if (!res.ok) { try { res = await fetch('/api/threads/most-viewed?limit=4'); } catch {} }
       const data = await res.json();
       mostViewedWrap.innerHTML = '';
       data.forEach((t) => {
@@ -785,11 +787,16 @@ async function init() {
         b.disabled = true;
         b.classList.add('pulse');
         try {
-          const res = await fetch(`/threads/${thread.id}/react`, {
+          let res = await fetch(`/threads/${thread.id}/react`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ emoji: em })
           });
+          if (!res.ok) {
+            res = await fetch(`/api/threads/${thread.id}/react`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emoji: em })
+            });
+          }
           const data = await res.json();
           const newCount = data?.reactions?.[em];
           if (typeof newCount === 'number') b.querySelector('.count').textContent = newCount;
@@ -855,11 +862,16 @@ async function init() {
       const text = replyForm.querySelector("textarea").value.trim();
       if (!text) return;
       try {
-        const res = await fetch(`/threads/${thread.id}/replies`, {
+        let res = await fetch(`/threads/${thread.id}/replies`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text }),
         });
+        if (!res.ok) {
+          res = await fetch(`/api/threads/${thread.id}/replies`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text })
+          });
+        }
         const r = await res.json();
         addReplyEl(r);
         replyForm.querySelector("textarea").value = "";
@@ -1018,7 +1030,8 @@ async function init() {
             if (!id) return;
             if (sessionStorage.getItem(viewedKey(id))) return;
             sessionStorage.setItem(viewedKey(id), '1');
-            fetch(`/threads/${id}/view`, { method: 'POST' }).catch(() => {});
+            fetch(`/threads/${id}/view`, { method: 'POST' })
+              .catch(() => fetch(`/api/threads/${id}/view`, { method: 'POST' }).catch(()=>{}));
           }
         });
       }, { threshold: 0.35 });

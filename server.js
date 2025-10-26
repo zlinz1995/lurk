@@ -187,7 +187,7 @@ try {
     setInterval(purgeExpired, 60 * 1000);
 
     // List threads
-    expressApp.get("/threads", (_req, res) => {
+    const listThreads = (_req, res) => {
       try {
         purgeExpired();
         const data = threads
@@ -210,10 +210,12 @@ try {
         console.error("/threads GET error", err);
         res.status(500).json({ error: "server_error" });
       }
-    });
+    };
+    expressApp.get("/threads", listThreads);
+    expressApp.get("/api/threads", listThreads);
 
     // Create thread (multipart form)
-    expressApp.post("/threads", upload.single("image"), (req, res) => {
+    const createThread = (req, res) => {
       try {
         const title = String(req.body?.title || "").trim();
         const body = String(req.body?.body || "").trim();
@@ -244,10 +246,12 @@ try {
         console.error("/threads POST error", err);
         res.status(500).json({ error: "server_error" });
       }
-    });
+    };
+    expressApp.post("/threads", upload.single("image"), createThread);
+    expressApp.post("/api/threads", upload.single("image"), createThread);
 
     // Add reply (JSON)
-    expressApp.post("/threads/:id/replies", (req, res) => {
+    const addReply = (req, res) => {
       try {
         const id = Number(req.params.id);
         const t = threads.find((x) => x.id === id);
@@ -263,10 +267,12 @@ try {
         console.error("/threads/:id/replies POST error", err);
         res.status(500).json({ error: "server_error" });
       }
-    });
+    };
+    expressApp.post("/threads/:id/replies", addReply);
+    expressApp.post("/api/threads/:id/replies", addReply);
 
     // React to a thread (JSON)
-    expressApp.post("/threads/:id/react", (req, res) => {
+    const reactThread = (req, res) => {
       try {
         const id = Number(req.params.id);
         const t = threads.find((x) => x.id === id);
@@ -282,10 +288,12 @@ try {
         console.error("/threads/:id/react POST error", err);
         res.status(500).json({ error: "server_error" });
       }
-    });
+    };
+    expressApp.post("/threads/:id/react", reactThread);
+    expressApp.post("/api/threads/:id/react", reactThread);
 
     // Record a view
-    expressApp.post("/threads/:id/view", (req, res) => {
+    const recordView = (req, res) => {
       try {
         const id = Number(req.params.id);
         const t = threads.find((x) => x.id === id);
@@ -296,10 +304,12 @@ try {
         console.error("/threads/:id/view POST error", err);
         res.status(500).json({ error: "server_error" });
       }
-    });
+    };
+    expressApp.post("/threads/:id/view", recordView);
+    expressApp.post("/api/threads/:id/view", recordView);
 
     // Most viewed (from currently alive threads = past hour)
-    expressApp.get("/threads/most-viewed", (req, res) => {
+    const mostViewed = (req, res) => {
       try {
         purgeExpired();
         const limit = Math.max(1, Math.min(10, Number(req.query.limit || 4)));
@@ -321,7 +331,9 @@ try {
         console.error("/threads/most-viewed GET error", err);
         res.status(500).json({ error: "server_error" });
       }
-    });
+    };
+    expressApp.get("/threads/most-viewed", mostViewed);
+    expressApp.get("/api/threads/most-viewed", mostViewed);
 
     // Minimal reports endpoint to avoid client errors
     expressApp.post("/reports", (req, res) => {
