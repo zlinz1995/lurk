@@ -140,13 +140,7 @@ header h1 {
   gap: 10px;
 }
 
-/* Header collapse button + collapsed styles */
-.header .hero-collapse { position: absolute; right: 8px; top: 8px; width: 26px; height: 26px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.08); color: #e8f6ff; font-weight: 800; cursor: pointer; }
-.header .hero-collapse:hover { background: rgba(255,255,255,0.15); }
-.header.is-collapsed { padding: 8px 34px 10px; border-radius: 14px; }
-.header.is-collapsed .tagline { display: none; }
-.header.is-docked { position: fixed; left: 50%; transform: translateX(-50%); top: 12px; width: min(640px, calc(100% - 24px)); z-index: 20; }
-.header.is-docked ~ main { margin-top: 140px; }
+/* Header collapse styles removed for nav pages */
 
 header p.sub {
   font-size: 0.95rem;

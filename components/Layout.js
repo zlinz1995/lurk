@@ -6,12 +6,10 @@ export default function Layout({ title = 'Lurk', description, subtitle, children
     <>
       <SEO title={title} description={description || subtitle} noindex={noindex} image={ogImage} type={ogType} />
       {!hideHeader && (
-        <header className="header" data-hero>
+        <header className="header">
           <img src="/favicon.png" alt="Lurk logo" className="logo" />
           <h1>{title}</h1>
           {subtitle && <p className="tagline">{subtitle}</p>}
-          {/* Collapse control for live header hero */}
-          <button id="site-hero-collapse" className="hero-collapse" aria-label="Collapse header" aria-expanded="true" title="Collapse">−</button>
         </header>
       )}
       <main>{children}</main>
