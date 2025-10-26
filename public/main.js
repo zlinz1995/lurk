@@ -107,6 +107,7 @@ async function init() {
   const sensitiveHidden = document.getElementById('sensitive');
   const previewImg = document.getElementById('image-preview-img');
   const heroCard = document.querySelector('.hero-card');
+  const heroSection = document.querySelector('.hero-form-section');
   const heroCollapseBtn = document.getElementById('hero-collapse');
   // Inline blog chat elements
   const blogChatMessages = document.getElementById("blog-chat-messages");
@@ -123,6 +124,7 @@ async function init() {
     const setHeroCollapsed = (on) => {
       if (!heroCard || !heroCollapseBtn) return;
       heroCard.classList.toggle('is-collapsed', !!on);
+      heroSection?.classList.toggle('is-collapsed', !!on);
       heroCollapseBtn.setAttribute('aria-expanded', on ? 'false' : 'true');
       heroCollapseBtn.textContent = on ? '+' : '−';
     };
