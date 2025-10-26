@@ -125,8 +125,12 @@ async function init() {
       if (!heroCard || !heroCollapseBtn) return;
       heroCard.classList.toggle('is-collapsed', !!on);
       heroSection?.classList.toggle('is-collapsed', !!on);
+      heroSection?.classList.toggle('is-docked', !!on);
       heroCollapseBtn.setAttribute('aria-expanded', on ? 'false' : 'true');
       heroCollapseBtn.textContent = on ? '+' : '−';
+      if (on) {
+        try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+      }
     };
     // Restore previous state
     try {
