@@ -106,6 +106,8 @@ async function init() {
   const nsfwToggle = document.getElementById('nsfw-toggle');
   const sensitiveHidden = document.getElementById('sensitive');
   const previewImg = document.getElementById('image-preview-img');
+  const heroCard = document.querySelector('.hero-card');
+  const heroCollapseBtn = document.getElementById('hero-collapse');
   // Inline blog chat elements
   const blogChatMessages = document.getElementById("blog-chat-messages");
   const blogChatForm = document.getElementById("blog-chat-form");
@@ -114,6 +116,27 @@ async function init() {
   // Prevent double event listeners if script reloads
   if (window.chatInitialized) return;
   window.chatInitialized = true;
+
+  // ---- Hero collapse toggle ----
+  try {
+    const HERO_COLLAPSE_KEY = 'lurk:heroCollapsed';
+    const setHeroCollapsed = (on) => {
+      if (!heroCard || !heroCollapseBtn) return;
+      heroCard.classList.toggle('is-collapsed', !!on);
+      heroCollapseBtn.setAttribute('aria-expanded', on ? 'false' : 'true');
+      heroCollapseBtn.textContent = on ? '+' : '−';
+    };
+    // Restore previous state
+    try {
+      const raw = sessionStorage.getItem(HERO_COLLAPSE_KEY);
+      if (raw === '1') setHeroCollapsed(true);
+    } catch {}
+    heroCollapseBtn?.addEventListener('click', () => {
+      const next = !heroCard.classList.contains('is-collapsed');
+      setHeroCollapsed(next);
+      try { sessionStorage.setItem(HERO_COLLAPSE_KEY, next ? '1' : '0'); } catch {}
+    });
+  } catch {}
 
   // Hard guard: prevent default form submission at capture phase
   try {

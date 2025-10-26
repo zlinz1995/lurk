@@ -8,10 +8,11 @@ export default function Home() {
         <div className="hero-card">
           <div className="hero-head">
             <img src="/favicon.png" alt="Lurk logo" className="logo" />
-            <div>
+            <div className="hero-text">
               <h1 className="hero-title">Lurk</h1>
               <p className="hero-sub">Posts that vanish each hour — nothing lasts forever.</p>
             </div>
+            <button id="hero-collapse" className="hero-collapse" aria-label="Collapse form" aria-expanded="true" title="Collapse">−</button>
           </div>
           <form id="thread-form" encType="multipart/form-data" onSubmit={(e)=>e.preventDefault()}>
             <h2 className="form-title">New Thread</h2>
