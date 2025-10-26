@@ -106,9 +106,9 @@ async function init() {
   const nsfwToggle = document.getElementById('nsfw-toggle');
   const sensitiveHidden = document.getElementById('sensitive');
   const previewImg = document.getElementById('image-preview-img');
-  const heroCard = document.querySelector('.hero-card');
-  const heroSection = document.querySelector('.hero-form-section');
-  const heroCollapseBtn = document.getElementById('hero-collapse');
+  const heroCard = document.querySelector('.hero-card') || document.querySelector('.header[data-hero]');
+  const heroSection = document.querySelector('.hero-form-section') || document.querySelector('.header[data-hero]');
+  const heroCollapseBtn = document.getElementById('hero-collapse') || document.getElementById('site-hero-collapse');
   // Inline blog chat elements
   const blogChatMessages = document.getElementById("blog-chat-messages");
   const blogChatForm = document.getElementById("blog-chat-form");
