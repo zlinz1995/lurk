@@ -115,6 +115,16 @@ async function init() {
   if (window.chatInitialized) return;
   window.chatInitialized = true;
 
+  // Hard guard: prevent default form submission at capture phase
+  try {
+    document.addEventListener('submit', (ev) => {
+      const form = ev?.target;
+      if (form && form.id === 'thread-form') {
+        ev.preventDefault();
+      }
+    }, true);
+  } catch {}
+
   // ---- Auto-scroll nav to reveal Report once ----
   try {
     const seenKey = 'lurk:scrolledReport';
@@ -350,6 +360,8 @@ async function init() {
   } catch {}
 
  if (threadForm) {
+    try { threadForm.setAttribute('action', ''); threadForm.setAttribute('method', 'post'); } catch {}
+    try { threadForm.noValidate = true; } catch {}
     const submitBtn = threadForm.querySelector('button[type="submit"], button');
 
     // ---- NSFW toggle logic ----
