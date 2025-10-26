@@ -410,27 +410,30 @@ async function init() {
       }, 1000);
     };
 
-    threadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-
+    async function submitThread(e) {
+      if (e) e.preventDefault();
       const formData = new FormData(threadForm);
       try {
         setPosting(true);
-        const res = await fetch("/threads", {
-          method: "POST",
-          body: formData,
-        });
+        const res = await fetch("/threads", { method: "POST", body: formData });
+        if (!res.ok) throw new Error(`POST /threads ${res.status}`);
         const data = await res.json();
-        // Server returns the created thread object directly
-        addThreadToDOM(data);
+        if (!data || typeof data.id === 'undefined') throw new Error('Bad response');
+        if (!document.querySelector(`[data-id="${data.id}"]`)) addThreadToDOM(data);
         threadForm.reset();
-        // Reset NSFW button and preview
         setNSFW(false);
         if (previewImg) { previewImg.src = ''; previewImg.style.display = 'none'; }
-        // Clear draft after successful post
         try { localStorage.removeItem(DRAFT_KEY); } catch {}
         setSuccess();
         playChime();
+        try { await loadMostViewed(); } catch {}
+        try { await loadThreads(); } catch {}
+        try {
+          const el = document.querySelector(`[data-id="${data.id}"]`);
+          el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el?.classList.add('highlight');
+          setTimeout(() => el?.classList.remove('highlight'), 1200);
+        } catch {}
       } catch (err) {
         console.error("Error submitting thread:", err);
         if (submitBtn) {
@@ -440,14 +443,13 @@ async function init() {
           setTimeout(() => (submitBtn.textContent = 'Post Thread'), 1500);
         }
       }
-    });
+    }
+
+    threadForm.addEventListener("submit", submitThread);
     // In case the button is type="button", trigger submit programmatically
     try {
       if (submitBtn) {
-        submitBtn.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          try { threadForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); } catch {}
-        });
+        submitBtn.addEventListener('click', (ev) => { ev.preventDefault(); submitThread(ev); });
       }
       // Support Enter key on inputs (but not inside textarea)
       threadForm.addEventListener('keydown', (ev) => {
