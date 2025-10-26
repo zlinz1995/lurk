@@ -1,15 +1,17 @@
 import Link from 'next/link';
 import SEO from './SEO';
 
-export default function Layout({ title = 'Lurk', description, subtitle, children, noindex = false, ogImage, ogType }) {
+export default function Layout({ title = 'Lurk', description, subtitle, children, noindex = false, ogImage, ogType, hideHeader = false }) {
   return (
     <>
       <SEO title={title} description={description || subtitle} noindex={noindex} image={ogImage} type={ogType} />
-      <header className="header">
-        <img src="/favicon.png" alt="Lurk logo" className="logo" />
-        <h1>{title}</h1>
-        {subtitle && <p className="tagline">{subtitle}</p>}
-      </header>
+      {!hideHeader && (
+        <header className="header">
+          <img src="/favicon.png" alt="Lurk logo" className="logo" />
+          <h1>{title}</h1>
+          {subtitle && <p className="tagline">{subtitle}</p>}
+        </header>
+      )}
       <main>{children}</main>
       <nav className="bottom-nav">
         <Link href="/" aria-label="Home" title="Home">

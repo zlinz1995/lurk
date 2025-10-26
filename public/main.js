@@ -356,7 +356,7 @@ async function init() {
     const getNSFW = () => nsfwToggle?.getAttribute('aria-pressed') === 'true';
     const setNSFW = (on) => {
       if (nsfwToggle) nsfwToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
-      if (sensitiveHidden) sensitiveHidden.value = on ? 'true' : '';
+      if (sensitiveHidden) sensitiveHidden.value = on ? 'on' : '';
       if (previewImg) previewImg.classList.toggle('blurred', !!on);
     };
     nsfwToggle?.addEventListener('click', () => setNSFW(!getNSFW()));
@@ -580,6 +580,48 @@ async function init() {
   loadThreads();
   // Periodically reconcile to animate vanishing threads
   setInterval(loadThreads, 15000);
+
+  // ---- Most Viewed (top 4) ----
+  const mostViewedWrap = document.getElementById('most-viewed');
+  async function loadMostViewed() {
+    if (!mostViewedWrap) return;
+    try {
+      const res = await fetch('/threads/most-viewed?limit=4');
+      const data = await res.json();
+      mostViewedWrap.innerHTML = '';
+      data.forEach((t) => {
+        const card = document.createElement('a');
+        card.href = '#threads';
+        card.className = 'mv-card';
+        card.setAttribute('data-id', String(t.id));
+        const img = document.createElement('img');
+        img.className = 'mv-thumb';
+        if (t.image) { img.src = t.image; img.alt = 'thread image'; } else { img.style.display = 'none'; }
+        const title = document.createElement('div');
+        title.className = 'mv-title';
+        title.textContent = t.title || '(untitled)';
+        const meta = document.createElement('div');
+        meta.className = 'mv-meta';
+        meta.textContent = `${(t.views || 0)} views`;
+        card.append(img, title, meta);
+        card.addEventListener('click', (e) => {
+          try {
+            // Scroll to the thread if present, else let it link to feed
+            const el = document.querySelector(`[data-id="${t.id}"]`);
+            if (el) {
+              e.preventDefault();
+              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              el.classList.add('highlight');
+              setTimeout(() => el.classList.remove('highlight'), 1200);
+            }
+          } catch {}
+        });
+        mostViewedWrap.appendChild(card);
+      });
+    } catch (e) { /* ignore */ }
+  }
+  loadMostViewed();
+  setInterval(loadMostViewed, 20000);
 
   // ---- Add Thread to DOM ----
   function addThreadToDOM(thread) {
@@ -866,6 +908,9 @@ async function init() {
         threadDiv.addEventListener('animationend', () => threadDiv.remove(), { once: true });
       }, ms + 50);
     } catch {}
+
+    // Mark view on first paint in viewport
+    try { observeThreadView(threadDiv, thread.id); } catch {}
   }
 
   // ---- Real-time updates via Socket.IO ----
@@ -928,6 +973,35 @@ async function init() {
       });
     }
   } catch {}
+
+  // ---- View tracking (increment once per session when visible) ----
+  const viewedKey = (id) => `lurk:viewed:${id}`;
+  let viewObserver = null;
+  function ensureViewObserver() {
+    if (viewObserver) return viewObserver;
+    try {
+      viewObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const el = entry.target;
+            const id = Number(el.getAttribute('data-id'));
+            if (!id) return;
+            if (sessionStorage.getItem(viewedKey(id))) return;
+            sessionStorage.setItem(viewedKey(id), '1');
+            fetch(`/threads/${id}/view`, { method: 'POST' }).catch(() => {});
+          }
+        });
+      }, { threshold: 0.35 });
+    } catch {}
+    return viewObserver;
+  }
+  function observeThreadView(el, id) {
+    try {
+      const obs = ensureViewObserver();
+      if (!obs) return;
+      obs.observe(el);
+    } catch {}
+  }
 
   // ---- Inline Image Zoom (within thread card) ----
   function attachInlineZoom(img) {
