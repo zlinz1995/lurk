@@ -101,7 +101,7 @@ async function init() {
   setChatStatus("connecting", "Connecting…");
   const bottomNav = document.querySelector('.bottom-nav');
   const navEllipsis = document.querySelector('.bottom-nav .nav-ellipsis');
-  const threadSubmitBtn = document.querySelector('#thread-form button[type="submit"], #thread-form button');
+  const threadSubmitBtn = document.getElementById('thread-submit') || document.querySelector('#thread-form button[type="submit"], #thread-form button');
   const imageInput = document.getElementById('image');
   const nsfwToggle = document.getElementById('nsfw-toggle');
   const sensitiveHidden = document.getElementById('sensitive');
@@ -362,7 +362,7 @@ async function init() {
  if (threadForm) {
     try { threadForm.setAttribute('action', ''); threadForm.setAttribute('method', 'post'); } catch {}
     try { threadForm.noValidate = true; } catch {}
-    const submitBtn = threadForm.querySelector('button[type="submit"], button');
+    const submitBtn = document.getElementById('thread-submit') || threadForm.querySelector('button[type="submit"]') || threadForm.querySelector('button');
 
     // ---- NSFW toggle logic ----
     const getNSFW = () => nsfwToggle?.getAttribute('aria-pressed') === 'true';
