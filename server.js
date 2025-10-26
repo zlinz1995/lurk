@@ -20,7 +20,28 @@ try {
     const server = http.createServer(expressApp);
 
     // --- BASIC APP MIDDLEWARE ---
-    expressApp.use(helmet());
+    // Helmet: relax CSP in dev to allow Next.js dev tooling (react-refresh uses eval)
+    expressApp.use(
+      helmet({
+        contentSecurityPolicy: dev
+          ? false
+          : {
+              directives: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "blob:"],
+                styleSrc: ["'self'", "'unsafe-inline'"],
+                imgSrc: ["'self'", "data:", "blob:"],
+                connectSrc: ["'self'", "ws:", "wss:"],
+                fontSrc: ["'self'", "data:"],
+                objectSrc: ["'none'"],
+                frameAncestors: ["'self'"],
+                workerSrc: ["'self'", "blob:"],
+              },
+            },
+        crossOriginEmbedderPolicy: false,
+        crossOriginResourcePolicy: { policy: "cross-origin" },
+      })
+    );
     expressApp.use(morgan("tiny"));
     expressApp.use(express.json({ limit: "1mb" }));
     expressApp.use(express.urlencoded({ extended: true }));
