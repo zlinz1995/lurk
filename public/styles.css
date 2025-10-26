@@ -1366,6 +1366,7 @@ main {
 
 /* ----- Most Viewed grid ----- */
 .most-viewed-section { max-width: 900px; width: 100%; padding: 0 12px; box-sizing: border-box; margin: 0 auto 1.5rem; }
+.most-viewed-section h2, .threads-section h2 { text-align: center; }
 .most-viewed-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
 .mv-card { display: flex; flex-direction: column; gap: 6px; background: rgba(18, 22, 30, 0.55); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px; text-decoration: none; color: inherit; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
 .mv-card:hover { transform: translateY(-2px); border-color: rgba(110,200,255,0.35); box-shadow: 0 12px 30px rgba(0,0,0,0.3); }

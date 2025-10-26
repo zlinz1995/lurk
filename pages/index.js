@@ -32,7 +32,7 @@ export default function Home() {
               <img id="image-preview-img" alt="Image preview" className="thread-image" style={{display:'none'}} />
             </div>
 
-            <button type="submit">Post Thread</button>
+            <button type="button" id="thread-submit">Post Thread</button>
             <small>Max 5 MB — jpg/png/webp/gif</small>
           </form>
         </div>
@@ -55,4 +55,3 @@ export default function Home() {
     </Layout>
   );
 }
-

@@ -441,6 +441,22 @@ async function init() {
         }
       }
     });
+    // In case the button is type="button", trigger submit programmatically
+    try {
+      if (submitBtn) {
+        submitBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          try { threadForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); } catch {}
+        });
+      }
+      // Support Enter key on inputs (but not inside textarea)
+      threadForm.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && ev.target && ev.target.tagName !== 'TEXTAREA') {
+          ev.preventDefault();
+          submitBtn?.click();
+        }
+      });
+    } catch {}
   }
 
   // ---- Bottom nav active underline ----
