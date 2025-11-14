@@ -2,3 +2,27 @@
 .next
 dist
 .env
+# Node and Next.js
+node_modules/
+.next/
+out/
+dist/
+
+# Bubblewrap / Android build output
+build/
+app/build/
+.gradle/
+.bubblewrap/
+local.properties
+*.keystore
+*.jks
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Sensitive signing files
+android.keystore
