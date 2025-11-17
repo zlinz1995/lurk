@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{\"pages\\\\video-chat.js -> socket.io-client\":{\"id\":\"pages\\\\video-chat.js -> socket.io-client\",\"files\":[\"static/chunks/node_modules_socket_io-client_build_esm_index_js.js\"]}}"
+self.__REACT_LOADABLE_MANIFEST="{}"
