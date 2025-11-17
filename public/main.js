@@ -1,1379 +1,2323 @@
-// main.js
+// ======================================================================
+// BATCH 10 — CREATION BURST • AUDIO CHIMES • NAV HIGHLIGHT • BUBBLE FIX
+// ======================================================================
 
-// ---- Socket Setup ----
-let socket = null;
-var username = null;
+// -------------------------------------------------------
+// CREATION BURST EFFECT FOR NEW THREADS
+// -------------------------------------------------------
+function spawnCreationBurst(host) {
+  try {
+    const burst = document.createElement("div");
+    burst.className = "creation-burst";
 
-// If Socket.IO is not loaded (e.g., running Next dev without custom server),
-// lazily load the client and create the connection before binding handlers.
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
+    const PARTICLES = 12;
+    for (let i = 0; i < PARTICLES; i++) {
+      const p = document.createElement("span");
+      p.className = "particle";
+
+      const angle = (Math.PI * 2 * i) / PARTICLES + (Math.random() * 0.6 - 0.3);
+      const radius = 24 + Math.random() * 26;
+      const dx = Math.cos(angle) * radius;
+      const dy = Math.sin(angle) * radius - (8 + Math.random() * 16);
+      const size = 4 + Math.random() * 6;
+      const hue = 190 + Math.floor(Math.random() * 80); // blue→violet
+
+      p.style.setProperty("--dx", dx + "px");
+      p.style.setProperty("--dy", dy + "px");
+      p.style.setProperty("--size", size + "px");
+      p.style.setProperty("--col", `hsl(${hue} 100% 70%)`);
+      p.style.animationDelay = Math.random() * 120 + "ms";
+
+      burst.appendChild(p);
+    }
+
+    host.appendChild(burst);
+    setTimeout(() => burst.remove(), 1200);
+  } catch (err) {
+    console.warn("[Lurk] Failed to spawn creation burst:", err);
+  }
+}
+
+// -------------------------------------------------------
+// AUDIO SYSTEM — PRIMING + POST CHIME + JOIN/LEAVE CHIMES
+// -------------------------------------------------------
+let pendingChimes = [];
+
+function primeAudioContext() {
+  const prime = () => {
     try {
-      const s = document.createElement('script');
-      s.src = src;
-      s.async = true;
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('failed to load '+src));
-      document.head.appendChild(s);
-    } catch (e) { reject(e); }
+      if (!audioCtx)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    } catch {}
+    window.removeEventListener("click", prime);
+    window.removeEventListener("keydown", prime);
+    window.removeEventListener("touchstart", prime);
+
+    // play any queued chimes
+    let delay = 0;
+    pendingChimes.forEach((kind) => {
+      setTimeout(() => playChatChime(kind), delay);
+      delay += 60;
+    });
+    pendingChimes = [];
+  };
+
+  window.addEventListener("click", prime, { once: true });
+  window.addEventListener("keydown", prime, { once: true });
+  window.addEventListener("touchstart", prime, { once: true });
+}
+
+function playPostChime() {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.06, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+  gain.connect(audioCtx.destination);
+
+  const tones = [880, 1320]; // A5 + E6
+  tones.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, now);
+    if (i === 1) osc.detune.setValueAtTime(8, now);
+    osc.connect(gain);
+    osc.start(now);
+    osc.stop(now + 0.65);
   });
 }
 
-async function ensureSocket() {
-  if (typeof window !== 'undefined' && window.io) {
-    try { return window.io(); } catch { return null; }
+function playChatChime(kind) {
+  if (!audioCtx) {
+    pendingChimes.push(kind);
+    return;
   }
-  try {
-    await loadScript('/socket.io/socket.io.js');
-    if (window.io) return window.io();
-  } catch {}
-  console.warn('[Lurk] Socket.IO client not available; chat disabled');
-  return null;
+
+  const now = audioCtx.currentTime;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.04, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+  gain.connect(audioCtx.destination);
+
+  const sequence = kind === "leave" ? [880, 660] : [660, 880];
+
+  sequence.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, now + i * 0.05);
+    osc.connect(gain);
+    osc.start(now + i * 0.05);
+    osc.stop(now + 0.3 + i * 0.05);
+  });
 }
 
-// ---- DOM Ready ----
-// Next.js may load this script after DOMContentLoaded (e.g., with
-// strategy="afterInteractive"), so run immediately if the DOM is already
-// ready; otherwise wait for the event. Wrap in an init() to avoid missing it.
-async function init() {
-  console.log("[Lurk] Frontend loaded");
-  setupAudioPriming();
+function chimeForJoinLeave(msg) {
+  try {
+    const text = typeof msg === "string" ? msg : msg?.text || "";
+    const t = text.toLowerCase();
+    if (t.includes("joined")) return playChatChime("join");
+    if (t.includes("left")) return playChatChime("leave");
+  } catch {}
+}
 
-  // Ensure chat UI exists on every page
-  (function ensureChatElements() {
+// -------------------------------------------------------
+// BOTTOM NAV ACTIVE LINK HIGHLIGHTING
+// -------------------------------------------------------
+function updateBottomNavActive() {
+  const nav = document.querySelector(".nav-bar, .bottom-nav");
+  if (!nav) return;
+
+  const links = nav.querySelectorAll("a");
+
+  const normalize = (p) => {
     try {
-      if (!document.getElementById("chat-box")) {
-        const chat = document.createElement("section");
-        chat.className = "chat";
-        chat.id = "chat-box";
-        chat.setAttribute("aria-label", "Live Chat");
-        chat.innerHTML = `
-          <header class="chat-header">
-            <span><strong>Live Chat</strong></span>
-            <div class="chat-header-controls">
-              <button id="chat-video-button" class="chat-video-button" title="Open video chat in a new tab" aria-label="Start video chat">
-                <span aria-hidden="true">🎥</span>
-              </button>
-              <span id="chat-status" class="chat-status is-connecting">Connecting…</span>
-              <button id="chat-toggle" class="chat-toggle" title="Minimize chat" aria-label="Minimize chat">--</button>
-            </div>
-          </header>
-          <div id="chat-body" class="chat-body">
-            <div id="chat-messages" class="chat-messages"></div>
-            <form id="chat-form" class="chat-form" autocomplete="off">
-              <input id="chat-input" name="text" maxlength="500" placeholder="Type a message…" />
-              <button type="submit">Send</button>
-            </form>
-          </div>
-        `;
-        document.body.appendChild(chat);
-      }
-      if (!document.getElementById("chat-bubble")) {
-        const bubble = document.createElement("button");
-        bubble.id = "chat-bubble";
-        bubble.title = "Open chat";
-        bubble.textContent = "💬";
-        document.body.appendChild(bubble);
-      }
-    } catch {}
-  })();
-
-  // ----------- Chat Elements -----------
-  const chatBox = document.getElementById("chat-box");
-  const chatBubble = document.getElementById("chat-bubble");
-  const chatToggle = document.getElementById("chat-toggle");
-  const chatVideoButton = document.getElementById("chat-video-button");
-  const chatMessages = document.getElementById("chat-messages");
-  const chatForm = document.getElementById("chat-form");
-  const chatInput = document.getElementById("chat-input");
-  const chatStatus = document.getElementById("chat-status");
-  const statusClassList = ["is-online", "is-offline", "is-connecting"];
-  const setChatStatus = (state, label) => {
-    if (!chatStatus) return;
-    statusClassList.forEach((cls) => chatStatus.classList.remove(cls));
-    if (state) {
-      const className = state.startsWith("is-") ? state : `is-${state}`;
-      if (!statusClassList.includes(className)) statusClassList.push(className);
-      chatStatus.classList.add(className);
+      if (!p) return "/";
+      p = p.split("#")[0].split("?")[0];
+      if (p.endsWith("/index.html")) p = p.replace("/index.html", "/");
+      return p || "/";
+    } catch {
+      return "/";
     }
-    chatStatus.textContent = label;
   };
-  setChatStatus("connecting", "Connecting…");
-  const bottomNav = document.querySelector('.bottom-nav');
-  const navEllipsis = document.querySelector('.bottom-nav .nav-ellipsis');
-  const threadSubmitBtn = document.getElementById('thread-submit') || document.querySelector('#thread-form button[type="submit"], #thread-form button');
-  const mediaInput = document.getElementById('image');
-  const nsfwToggle = document.getElementById('nsfw-toggle');
-  const sensitiveHidden = document.getElementById('sensitive');
-  const previewImg = document.getElementById('media-preview-img') || document.getElementById('image-preview-img');
-  const previewVideo = document.getElementById('media-preview-video');
-  const previewAudio = document.getElementById('media-preview-audio');
-  const heroCard = document.querySelector('.hero-card');
-  const heroSection = document.querySelector('.hero-form-section');
-  const heroCollapseBtn = document.getElementById('hero-collapse');
-  // Inline blog chat elements
-  const blogChatMessages = document.getElementById("blog-chat-messages");
-  const blogChatForm = document.getElementById("blog-chat-form");
-  const blogChatInput = document.getElementById("blog-chat-input");
 
-  // Prevent double event listeners if script reloads
-  if (window.chatInitialized) return;
-  window.chatInitialized = true;
+  const current = normalize(window.location.pathname);
+  let activeLink = null;
 
-  // ---- Hero collapse toggle ----
-  try {
-    const HERO_COLLAPSE_KEY = 'lurk:heroCollapsed';
-    const setHeroCollapsed = (on) => {
-      if (!heroCard || !heroCollapseBtn) return;
-      heroCard.classList.toggle('is-collapsed', !!on);
-      heroSection?.classList.toggle('is-collapsed', !!on);
-      heroSection?.classList.toggle('is-docked', !!on);
-      heroCollapseBtn.setAttribute('aria-expanded', on ? 'false' : 'true');
-      heroCollapseBtn.textContent = on ? '+' : '−';
-      if (on) {
-        try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
-      }
-    };
-    // Restore previous state
+  links.forEach((a) => {
     try {
-      const raw = sessionStorage.getItem(HERO_COLLAPSE_KEY);
-      if (raw === '1') setHeroCollapsed(true);
+      const href = a.getAttribute("href");
+      if (!href) return;
+      const linkPath = normalize(new URL(href, window.location.origin).pathname);
+      if (linkPath === current) activeLink = a;
     } catch {}
-    heroCollapseBtn?.addEventListener('click', () => {
-      const next = !heroCard.classList.contains('is-collapsed');
-      setHeroCollapsed(next);
-      try { sessionStorage.setItem(HERO_COLLAPSE_KEY, next ? '1' : '0'); } catch {}
-    });
-  } catch {}
+  });
 
-  // Hard guard: prevent default form submission at capture phase
-  try {
-    document.addEventListener('submit', (ev) => {
-      const form = ev?.target;
-      if (form && form.id === 'thread-form') {
-        ev.preventDefault();
-      }
-    }, true);
-  } catch {}
+  links.forEach((a) => a.classList.remove("active"));
+  if (activeLink) activeLink.classList.add("active");
+}
 
-  // ---- Auto-scroll nav to reveal Report once ----
-  try {
-    const seenKey = 'lurk:scrolledReport';
-    if (!sessionStorage.getItem(seenKey) && bottomNav) {
-      const reportLink = bottomNav.querySelector('a[aria-label="Report"], a[title="Report"], a[href="/report"]');
-      if (reportLink && typeof reportLink.scrollIntoView === 'function') {
-        setTimeout(() => {
-          try { reportLink.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' }); } catch {}
-        }, 200);
-        sessionStorage.setItem(seenKey, '1');
-      }
+// -------------------------------------------------------
+// REPOSITION CHAT BUBBLE WHEN POST BUTTON OVERLAPS
+// -------------------------------------------------------
+function setupChatBubbleReposition() {
+  const bubble = document.getElementById("chat-bubble");
+  if (!bubble) return;
+
+  const postBtn =
+    document.querySelector("#thread-form button[type='submit']") ||
+    document.querySelector("#thread-form button");
+
+  if (!postBtn) return;
+
+  let rafId = null;
+
+  const reposition = () => {
+    rafId = null;
+
+    const bubbleRect = bubble.getBoundingClientRect();
+    const postRect = postBtn.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const bubbleLeft = bubbleRect.left;
+    const bubbleRight = bubbleRect.right;
+    const bubbleTop = bubbleRect.top;
+    const bubbleBottom = bubbleRect.bottom;
+
+    const overlapX = postRect.left < bubbleRight && postRect.right > bubbleLeft;
+    const overlapY = postRect.top < bubbleBottom && postRect.bottom > bubbleTop;
+
+    if (overlapX && overlapY) {
+      bubble.style.bottom = postRect.height + 40 + "px";
+    } else {
+      bubble.style.bottom = "";
     }
-  } catch {}
+  };
 
-  // ---- Chat toggle behaviour ----
-  if (chatBox && chatBubble && chatToggle) {
-    // Start minimized by default
-    chatBox.style.display = "none";
+  const schedule = () => {
+    if (!rafId) rafId = requestAnimationFrame(reposition);
+  };
 
-    const isOpen = () => chatBox.style.display !== "none";
-    const openChat = () => { chatBox.style.display = "block"; };
-    const closeChat = () => { chatBox.style.display = "none"; };
-    const toggleChat = () => (isOpen() ? closeChat() : openChat());
+  window.addEventListener("scroll", schedule, { passive: true });
+  window.addEventListener("resize", schedule);
+  schedule();
+}
 
-    // Toggle chat using either the bubble or the header "--" button
-    chatBubble.addEventListener("click", toggleChat);
-    chatToggle.addEventListener("click", toggleChat);
-  }
+// -------------------------------------------------------
+// EXPORT GLOBAL TO WINDOW (useful for debugging)
+// -------------------------------------------------------
+window.__LURK_UTILS__ = {
+  debugLog,
+  scrollToThreadEl,
+  addReplyToThread,
+  updateThreadReactions,
+  spawnCreationBurst,
+  playChatChime,
+};
 
-  if (chatVideoButton) {
-    chatVideoButton.addEventListener("click", () => {
-      try {
-        window.open("/video-chat", "_blank", "noopener");
-      } catch {
-        window.location.href = "/video-chat";
-      }
-    });
-  }
+// Initialize audio priming
+primeAudioContext();
 
-  // ---- Chat Socket Initialization + Events ----
-  // Create the socket connection (if available) and wire up listeners.
-  if (!socket) {
-    try { socket = await ensureSocket(); } catch {}
-  }
+// Initialize nav highlighting
+updateBottomNavActive();
+window.addEventListener("popstate", updateBottomNavActive);
 
-  if (!socket) {
-    // Could not load/connect Socket.IO client; fall back to a passive live state.
-    setChatStatus("online", "Live");
-  }
+// BATCH TWO//
+// ======================================================================
+// BATCH 2 — UI LOOKUPS + CHATWIDGET CHAT SYSTEM
+// ======================================================================
 
-  if (socket && chatStatus) {
-    socket.on("connect", () => {
-      setChatStatus("online", "Live");
-      console.log("[Chat] Connected");
-    });
+// -------------------------------------------------------
+// UI ELEMENT REFERENCES (Centralized)
+// -------------------------------------------------------
+let chatMessages = null;
+let chatForm = null;
+let chatInput = null;
 
-    socket.on("disconnect", () => {
-      setChatStatus("connecting", "Reconnecting…");
-      console.log("[Chat] Disconnected");
-    });
+let blogChatMessages = null;
+let blogChatForm = null;
+let blogChatInput = null;
 
-    socket.on("chatMessage", (msg) => {
-      const render = (container, m) => {
-        if (!container) return;
-        const toText = (mm) => (typeof mm === "string") ? String(mm) : `[${mm.time ?? ""}] ${mm.user ?? ""}: ${mm.text ?? ""}`.trim();
-        const finalText = toText(m);
-        if (container === blogChatMessages) {
-          try {
-            const incoming = (typeof m === "string") ? String(m) : String(m.text || "");
-            const candidates = Array.from(container.querySelectorAll('div[data-optimistic="1"]'));
-            for (let i = candidates.length - 1; i >= 0; i--) {
-              const el = candidates[i];
-              if ((el.dataset.text || "") === incoming) {
-                el.dataset.optimistic = "0";
-                el.textContent = finalText;
-                container.scrollTop = container.scrollHeight;
-                return;
-              }
-            }
-          } catch {}
-        }
-        const el = document.createElement("div");
-        el.textContent = finalText;
-        container.appendChild(el);
-        container.scrollTop = container.scrollHeight;
-      };
-      render(chatMessages, msg);
-      render(blogChatMessages, msg);
-      const t = (msg?.text || String(msg || "")).toLowerCase();
-      if (t.endsWith("joined")) playChatChime("join");
-      if (t.endsWith("left")) playChatChime("leave");
-    });
+let threadForm = null;
+let threadsContainer = null;
 
-    socket.on("chat message", (msg) => {
-      const add = (container) => {
-        if (!container) return;
-        const el = document.createElement("div");
-        el.textContent = String(msg);
-        container.appendChild(el);
-        container.scrollTop = container.scrollHeight;
-      };
-      add(chatMessages);
-      add(blogChatMessages);
-      const lower = String(msg).toLowerCase();
-      if (lower.endsWith("joined")) playChatChime("join");
-      else if (lower.endsWith("left")) playChatChime("leave");
-    });
+let mediaInput = null;
+let previewImg = null;
+let previewVideo = null;
+let previewAudio = null;
 
-    chatForm?.addEventListener("submit", (e) => {
+let nsfwToggle = null;
+let sensitiveHidden = null;
+
+let threadSubmitBtn = null;
+
+let mostViewedWrap = null;
+
+let heroCard = null;
+let heroSection = null;
+let heroCollapseBtn = null;
+
+let bottomNav = null;
+let navEllipsis = null;
+
+// -------------------------------------------------------
+// GATHER ALL REFERENCES IN ONE STEP
+// -------------------------------------------------------
+function grabUIReferences() {
+  // ChatWidget
+  chatMessages = document.getElementById("live-chat-messages");
+  chatForm     = document.getElementById("live-chat-form");
+  chatInput    = document.getElementById("live-chat-input");
+
+  // Blog chat
+  blogChatMessages = document.getElementById("blog-chat-messages");
+  blogChatForm     = document.getElementById("blog-chat-form");
+  blogChatInput    = document.getElementById("blog-chat-input");
+
+  // Thread creation
+  threadForm        = document.getElementById("thread-form");
+  threadSubmitBtn   = threadForm?.querySelector("button[type='submit']") ||
+                      threadForm?.querySelector("button");
+
+  threadsContainer  = document.getElementById("threads");
+
+  // Media input + previews
+  mediaInput   = document.getElementById("thread-media");
+  previewImg   = document.getElementById("image-preview-img") ||
+                 document.getElementById("media-preview-img");
+  previewVideo = document.getElementById("media-preview-video");
+  previewAudio = document.getElementById("media-preview-audio");
+
+  // NSFW toggle
+  nsfwToggle      = document.getElementById("nsfw-toggle");
+  sensitiveHidden = document.getElementById("sensitive");
+
+  // Most viewed
+  mostViewedWrap = document.getElementById("most-viewed");
+
+  // Hero card collapse
+  heroCard       = document.querySelector(".hero-card");
+  heroSection    = document.querySelector(".hero-form-section");
+  heroCollapseBtn = document.getElementById("hero-collapse");
+
+  // Bottom navigation
+  bottomNav   = document.querySelector(".bottom-nav, .nav-bar");
+  navEllipsis = bottomNav?.querySelector(".nav-ellipsis");
+}
+
+// ======================================================================
+// CHAT SYSTEMS (ChatWidget + Blog Chat)
+// ======================================================================
+function initChatSystems() {
+  // No socket? No chat.
+  if (!socket) return;
+
+  // -------------------------
+  // RECEIVE MESSAGES
+  // -------------------------
+  socket.on("chatMessage", (msg) => {
+    addIncomingChat(msg);
+  });
+
+  socket.on("chat message", (msg) => {
+    addIncomingChat(msg);
+  });
+
+  // -------------------------
+  // SEND (ChatWidget)
+  // -------------------------
+  if (chatForm) {
+    chatForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const text = chatInput.value.trim();
       if (!text) return;
-      // Emit using the server's event name (and a secondary camelCase for future compatibility)
+
       socket.emit("chat message", text);
       socket.emit("chatMessage", { text });
+
       chatInput.value = "";
     });
-    blogChatForm?.addEventListener("submit", (e) => {
+  }
+
+  // -------------------------
+  // SEND (Blog Chat)
+  // -------------------------
+  if (blogChatForm) {
+    blogChatForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const text = blogChatInput.value.trim();
       if (!text) return;
+
       socket.emit("chat message", text);
       socket.emit("chatMessage", { text });
-      try {
-        if (blogChatMessages) {
-          const el = document.createElement("div");
-          el.textContent = text;
-          el.setAttribute('data-optimistic', '1');
-          el.setAttribute('data-text', text);
-          blogChatMessages.appendChild(el);
-          blogChatMessages.scrollTop = blogChatMessages.scrollHeight;
-        }
-      } catch {}
+
+      // Optimistic UI for blog chat
+      const el = document.createElement("div");
+      el.textContent = text;
+      blogChatMessages?.appendChild(el);
+      blogChatMessages.scrollTop = blogChatMessages.scrollHeight;
+
       blogChatInput.value = "";
     });
+  }
+}
 
-    // Ensure clean status labels without leading dots
-    try {
-      socket.on("connect", () => { setChatStatus("online", "Live"); });
-      socket.on("disconnect", () => { setChatStatus("connecting", "Reconnecting…"); });
-    } catch {}
+// -------------------------------------------------------
+// ADD INCOMING CHAT MESSAGES TO ALL CHANNELS
+// -------------------------------------------------------
+function addIncomingChat(msg) {
+  const content = typeof msg === "string" ? msg : msg?.text || "";
+
+  if (chatMessages) {
+    const d = document.createElement("div");
+    d.textContent = content;
+    chatMessages.appendChild(d);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
-  // ----------- Threads -----------
-  const threadForm = document.getElementById("thread-form");
-  const threadsContainer = document.getElementById("threads");
-  const loadMoreBtn = document.getElementById("load-more");
-  const titleInput = document.getElementById("title");
-  const bodyInput = document.getElementById("body");
-  const EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+  if (blogChatMessages) {
+    const d2 = document.createElement("div");
+    d2.textContent = content;
+    blogChatMessages.appendChild(d2);
+    blogChatMessages.scrollTop = blogChatMessages.scrollHeight;
+  }
 
-  // ---- Draft persistence (localStorage) ----
+  chimeForJoinLeave(content);
+}
+
+// -------------------------------------------------------
+// JOIN / LEAVE CHIMES
+// -------------------------------------------------------
+function chimeForJoinLeave(text) {
+  const t = String(text).toLowerCase();
+  if (t.includes("joined")) playChatChime("join");
+  if (t.includes("left"))   playChatChime("leave");
+}
+//BATCH THREE//// ======================================================================
+// BATCH 3 — THREAD COMPOSER + NSFW + MEDIA PREVIEW + DRAFT SAVE
+// ======================================================================
+
+// -------------------------------------------------------
+// THREAD COMPOSER INITIALIZATION
+// -------------------------------------------------------
+function initThreadComposer() {
+  if (!threadForm) return;
+
+  threadForm.noValidate = true;
+
+  threadForm.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    submitThread();
+  });
+
+  // "Enter" submits if not typing inside textarea
+  threadForm.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && ev.target.tagName !== "TEXTAREA") {
+      ev.preventDefault();
+      submitThread();
+    }
+  });
+
+  // Setup NSFW toggle
+  if (nsfwToggle) {
+    nsfwToggle.setAttribute("aria-pressed", "false");
+    nsfwToggle.addEventListener("click", () => {
+      const next = nsfwToggle.getAttribute("aria-pressed") === "false";
+      setNSFW(next);
+    });
+  }
+
+  // Media preview handling
+  if (mediaInput) {
+    mediaInput.addEventListener("change", () => {
+      updateMediaPreview();
+    });
+  }
+}
+
+// -------------------------------------------------------
+// SET NSFW STATE
+// -------------------------------------------------------
+function setNSFW(on) {
+  if (!nsfwToggle) return;
+
+  nsfwToggle.setAttribute("aria-pressed", on ? "true" : "false");
+
+  if (sensitiveHidden) {
+    sensitiveHidden.value = on ? "on" : "";
+  }
+
+  applyPreviewBlur(on);
+}
+
+// -------------------------------------------------------
+// APPLY BLUR TO MEDIA PREVIEW IF NSFW
+// -------------------------------------------------------
+function applyPreviewBlur(blur) {
+  if (previewImg && previewImg.style.display !== "none") {
+    previewImg.classList.toggle("blurred", blur);
+  }
+  if (previewVideo && previewVideo.style.display !== "none") {
+    previewVideo.classList.toggle("blurred", blur);
+  }
+}
+
+// -------------------------------------------------------
+// MEDIA PREVIEW LOGIC (image / video / audio)
+// -------------------------------------------------------
+let previewObjectUrl = null;
+
+function updateMediaPreview() {
+  clearMediaPreview();
+
+  const file = mediaInput?.files?.[0];
+  if (!file) return;
+
+  const url = URL.createObjectURL(file);
+  previewObjectUrl = url;
+
+  const mime = (file.type || "").toLowerCase();
+
+  if (mime.startsWith("video/")) {
+    if (previewVideo) {
+      previewVideo.src = url;
+      previewVideo.style.display = "block";
+      previewVideo.load();
+    }
+  } else if (mime.startsWith("audio/")) {
+    if (previewAudio) {
+      previewAudio.src = url;
+      previewAudio.style.display = "block";
+      previewAudio.load();
+    }
+  } else {
+    if (previewImg) {
+      previewImg.src = url;
+      previewImg.style.display = "block";
+    }
+  }
+
+  applyPreviewBlur(nsfwToggle?.getAttribute("aria-pressed") === "true");
+}
+
+// -------------------------------------------------------
+// CLEAR PREVIOUS PREVIEW
+// -------------------------------------------------------
+function clearMediaPreview() {
+  try {
+    if (previewObjectUrl) {
+      URL.revokeObjectURL(previewObjectUrl);
+      previewObjectUrl = null;
+    }
+  } catch {}
+
+  if (previewImg) {
+    previewImg.src = "";
+    previewImg.style.display = "none";
+    previewImg.classList.remove("blurred");
+  }
+  if (previewVideo) {
+    previewVideo.pause?.();
+    previewVideo.removeAttribute("src");
+    previewVideo.load?.();
+    previewVideo.style.display = "none";
+    previewVideo.classList.remove("blurred");
+  }
+  if (previewAudio) {
+    previewAudio.pause?.();
+    previewAudio.removeAttribute("src");
+    previewAudio.load?.();
+    previewAudio.style.display = "none";
+  }
+}
+
+// ======================================================================
+// THREAD DRAFT SAVING (localStorage)
+// ======================================================================
+function initDraftPersistence() {
+  if (!threadForm) return;
+
   const DRAFT_KEY = "lurk:threadDraft";
+
+  // Restore saved draft
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
     if (raw) {
       const draft = JSON.parse(raw);
-      if (titleInput && typeof draft.title === "string") titleInput.value = draft.title;
-      if (bodyInput && typeof draft.body === "string") bodyInput.value = draft.body;
+      const textBox = threadForm.querySelector("#thread-text");
+      if (textBox && draft.text) textBox.value = draft.text;
     }
   } catch {}
 
-  const saveDraft = () => {
-    try {
-      localStorage.setItem(
-        DRAFT_KEY,
-        JSON.stringify({ title: titleInput?.value || "", body: bodyInput?.value || "", ts: Date.now() })
-      );
-    } catch {}
+  // Save draft after pause
+  let draftTimer = null;
+  const scheduleSave = () => {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraft, 300);
   };
-  let draftTimer;
-  const scheduleDraftSave = () => { clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 300); };
-  titleInput?.addEventListener("input", scheduleDraftSave);
-  bodyInput?.addEventListener("input", scheduleDraftSave);
 
-  // If socket.io script wasn’t present, try to load and bind now.
-  try {
-    if (!socket) socket = await ensureSocket();
-    if (socket && chatStatus) {
-      // Basic bindings so chat works even if initial block skipped
-      setChatStatus(socket.connected ? "online" : "connecting", socket.connected ? "Live" : "Connecting…");
-      socket.on("connect", () => { try { setChatStatus("online", "Live"); } catch {} });
-      socket.on("disconnect", () => { try { setChatStatus("connecting", "Reconnecting…"); } catch {} });
-      socket.on("chatMessage", (msg) => {
-        const render = (container, m) => {
-          if (!container) return;
-          const el = document.createElement("div");
-          if (typeof m === "string") el.textContent = m;
-          else el.textContent = `[${m.time ?? ""}] ${m.user ?? ""}: ${m.text ?? ""}`.trim();
-          container.appendChild(el);
-          container.scrollTop = container.scrollHeight;
-        };
-        try { render(chatMessages, msg); render(blogChatMessages, msg); } catch {}
-      });
-      socket.on("chat message", (msg) => {
-        const add = (container) => {
-          if (!container) return;
-          const el = document.createElement("div");
-          el.textContent = String(msg);
-          container.appendChild(el);
-          container.scrollTop = container.scrollHeight;
-        };
-        try { add(chatMessages); add(blogChatMessages); } catch {}
-      });
-      chatForm?.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const text = chatInput.value.trim();
-        if (!text) return;
-        socket.emit("chat message", text);
-        socket.emit("chatMessage", { text });
-        chatInput.value = "";
-      });
-      blogChatForm?.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const text = blogChatInput.value.trim();
-        if (!text) return;
-        socket.emit("chat message", text);
-        socket.emit("chatMessage", { text });
-        blogChatInput.value = "";
-      });
-    }
-  } catch {}
+  const textBox = threadForm.querySelector("#thread-text");
+  if (textBox) {
+    textBox.addEventListener("input", scheduleSave);
+  }
 
-  // Final normalization of status text and events
-  try {
-    if (socket && chatStatus) {
-      setChatStatus(socket.connected ? "online" : "connecting", socket.connected ? "Live" : "Connecting…");
-      socket.on("connect", () => { setChatStatus("online", "Live"); });
-      socket.on("disconnect", () => { setChatStatus("connecting", "Reconnecting…"); });
-      socket.io?.on?.("reconnect_attempt", () => { setChatStatus("connecting", "Reconnecting…"); });
-      socket.io?.on?.("reconnect_failed", () => { setChatStatus("online", "Live"); });
-    }
-  } catch {}
-
- if (threadForm) {
-    try { threadForm.setAttribute('action', ''); threadForm.setAttribute('method', 'post'); } catch {}
-    try { threadForm.noValidate = true; } catch {}
-    const submitBtn = document.getElementById('thread-submit') || threadForm.querySelector('button[type="submit"]') || threadForm.querySelector('button');
-
-    // ---- NSFW toggle logic ----
-    const getNSFW = () => nsfwToggle?.getAttribute('aria-pressed') === 'true';
-    const applyPreviewBlur = () => {
-      const shouldBlur = !!getNSFW();
-      [previewImg, previewVideo].forEach((el) => {
-        if (!el) return;
-        const visible = el.style?.display !== 'none';
-        el.classList.toggle('blurred', shouldBlur && visible);
-      });
-    };
-    const setNSFW = (on) => {
-      if (nsfwToggle) nsfwToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
-      if (sensitiveHidden) sensitiveHidden.value = on ? 'on' : '';
-      applyPreviewBlur();
-    };
-    nsfwToggle?.addEventListener('click', () => setNSFW(!getNSFW()));
-
-    let previewObjectUrl = null;
-    const clearMediaPreview = () => {
-      try {
-        if (previewObjectUrl) {
-          URL.revokeObjectURL(previewObjectUrl);
-          previewObjectUrl = null;
-        }
-      } catch { previewObjectUrl = null; }
-      if (previewImg) {
-        previewImg.src = '';
-        previewImg.style.display = 'none';
-        previewImg.classList.remove('blurred');
-      }
-      if (previewVideo) {
-        try { previewVideo.pause(); } catch {}
-        previewVideo.removeAttribute('src');
-        try { previewVideo.load(); } catch {}
-        previewVideo.style.display = 'none';
-        previewVideo.classList.remove('blurred');
-      }
-      if (previewAudio) {
-        try { previewAudio.pause(); } catch {}
-        previewAudio.removeAttribute('src');
-        try { previewAudio.load(); } catch {}
-        previewAudio.style.display = 'none';
-      }
-    };
-
-    // ---- Media preview (image/video/audio) ----
-    mediaInput?.addEventListener('change', () => {
-      try {
-        clearMediaPreview();
-        const file = mediaInput.files?.[0];
-        if (!file) return;
-        const url = URL.createObjectURL(file);
-        previewObjectUrl = url;
-        const mime = String(file.type || '').toLowerCase();
-        if (mime.startsWith('video/')) {
-          if (previewVideo) {
-            previewVideo.src = url;
-            previewVideo.style.display = 'block';
-            try { previewVideo.load(); } catch {}
-          }
-        } else if (mime.startsWith('audio/')) {
-          if (previewAudio) {
-            previewAudio.src = url;
-            previewAudio.style.display = 'block';
-            try { previewAudio.load(); } catch {}
-          }
-        } else if (previewImg) {
-          previewImg.src = url;
-          previewImg.style.display = 'block';
-        }
-        applyPreviewBlur();
-      } catch {}
-    });
-
-    const setPosting = (on) => {
-      if (!submitBtn) return;
-      submitBtn.disabled = !!on;
-      submitBtn.classList.toggle('is-posting', !!on);
-      if (on) submitBtn.textContent = 'Posting…';
-    };
-
-    const setSuccess = () => {
-      if (!submitBtn) return;
-      submitBtn.classList.remove('is-posting');
-      submitBtn.classList.add('is-success');
-      submitBtn.textContent = 'Posted!';
-      setTimeout(() => {
-        submitBtn.classList.remove('is-success');
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Post Thread';
-      }, 1000);
-    };
-
-    async function submitThread(e) {
-      if (e) e.preventDefault();
-      const formData = new FormData(threadForm);
-      try {
-        setPosting(true);
-        const res = await fetch("/threads", { method: "POST", body: formData });
-        let payload = null;
-        try {
-          payload = await res.json();
-        } catch {
-          payload = null;
-        }
-        if (!res.ok) {
-          const error = new Error(`POST /threads ${res.status}`);
-          error.responsePayload = payload;
-          error.responseStatus = res.status;
-          throw error;
-        }
-        const data = payload;
-        if (!data || typeof data.id === 'undefined') throw new Error('Bad response');
-        if (!document.querySelector(`[data-id="${data.id}"]`)) addThreadToDOM(data);
-        threadForm.reset();
-        setNSFW(false);
-        clearMediaPreview();
-        try { localStorage.removeItem(DRAFT_KEY); } catch {}
-        setSuccess();
-        playChime();
-        try { await loadMostViewed(); } catch {}
-        try { await loadThreads(); } catch {}
-        try {
-          const el = document.querySelector(`[data-id="${data.id}"]`);
-          el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          el?.classList.add('highlight');
-          setTimeout(() => el?.classList.remove('highlight'), 1200);
-        } catch {}
-      } catch (err) {
-        console.error("Error submitting thread:", err);
-        try {
-          const code = err?.responsePayload?.error;
-          let msg = null;
-          if (code === 'media_too_large') msg = 'Video/audio uploads are limited to 100 MB.';
-          else if (code === 'image_too_large') msg = 'Images are limited to 5 MB.';
-          else if (code === 'invalid_file_type') msg = 'Unsupported file type. Try mp4, webm, mp3, wav, jpg, png, or webp.';
-          else if (err?.responseStatus === 413) msg = 'Upload too large. Keep files at or below 100 MB.';
-          if (msg) alert(msg);
-        } catch {}
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.classList.remove('is-posting');
-          submitBtn.textContent = 'Try again';
-          setTimeout(() => (submitBtn.textContent = 'Post Thread'), 1500);
-        }
-      }
-    }
-
-    threadForm.addEventListener("submit", submitThread);
-    // In case the button is type="button", trigger submit programmatically
+  function saveDraft() {
     try {
-      if (submitBtn) {
-        submitBtn.addEventListener('click', (ev) => { ev.preventDefault(); submitThread(ev); });
-      }
-      // Support Enter key on inputs (but not inside textarea)
-      threadForm.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' && ev.target && ev.target.tagName !== 'TEXTAREA') {
-          ev.preventDefault();
-          submitBtn?.click();
-        }
-      });
+      const text = textBox?.value || "";
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ text }));
     } catch {}
   }
+}
 
-  // ---- Bottom nav active underline ----
-  if (bottomNav) {
-    const links = bottomNav.querySelectorAll('a');
-    const setActive = (el) => {
-      links.forEach((a) => a.classList.toggle('active', a === el));
-    };
+// ======================================================================
+// SUBMIT THREAD
+// ======================================================================
+async function submitThread() {
+  if (!threadForm || !threadSubmitBtn) return;
 
-    // Determine active link based on current path
-    const normalizePath = (p) => {
-      try {
-        if (!p) return '/';
-        // Strip query/hash and normalize index.html to '/'
-        p = p.split('#')[0].split('?')[0];
-        if (p.endsWith('/index.html')) p = p.replace(/\/index\.html$/, '/');
-        if (p === '') p = '/';
-        return p;
-      } catch { return '/'; }
-    };
-    const currentPath = normalizePath(window.location.pathname);
-    let matched = null;
-    links.forEach((a) => {
-      try {
-        const href = a.getAttribute('href') || '#';
-        if (href === '#') return;
-        const path = normalizePath(new URL(href, window.location.origin).pathname);
-        if (path === currentPath) matched = a;
-      } catch {}
-    });
-    if (matched) setActive(matched); else if (links.length) setActive(links[0]);
+  const formData = new FormData(threadForm);
 
-    // Keep UI responsive when clicking non-navigating anchors
-    links.forEach((a) => {
-      a.addEventListener('click', (e) => {
-        if (a.getAttribute('href') === '#') {
-          e.preventDefault();
-          setActive(a);
-        }
-      });
+  // Show posting state
+  setPosting(true);
+
+  try {
+    let res = await fetch("/threads", {
+      method: "POST",
+      body: formData,
     });
 
-    // Collapse toggle (ellipsis on the right)
-    if (navEllipsis) {
-      navEllipsis.addEventListener('click', () => {
-        bottomNav.classList.toggle('collapsed');
-      });
-    }
-  }
-
-  // ---- Keep chat bubble clear of the Post button ----
-  (function setupBubbleReposition() {
-    const bubble = chatBubble;
-    if (!bubble) return;
-
-    // Read initial offsets from computed style (accounts for safe-area)
-    const getBaseOffsets = () => {
-      const cs = getComputedStyle(bubble);
-      return {
-        bottom: parseFloat(cs.bottom) || 20,
-        right: parseFloat(cs.right) || 25,
-      };
-    };
-    let rafId = 0;
-
-    const reposition = () => {
-      rafId = 0;
-      try {
-        const hB = bubble.offsetHeight || 48;
-        const wB = bubble.offsetWidth || 48;
-        const { bottom: BASE_BOTTOM, right: BASE_RIGHT } = getBaseOffsets();
-        let newBottom = BASE_BOTTOM;
-
-        if (threadSubmitBtn) {
-          const r = threadSubmitBtn.getBoundingClientRect();
-          const vw = window.innerWidth;
-          const vh = window.innerHeight;
-          // Bubble position in viewport coordinates
-          const bubbleLeft = vw - BASE_RIGHT - wB;
-          const bubbleRight = vw - BASE_RIGHT;
-          const bubbleTop = vh - BASE_BOTTOM - hB;
-          const bubbleBottom = vh - BASE_BOTTOM;
-
-          // Does the button overlap the bubble area horizontally and vertically?
-          const overlapX = r.left < bubbleRight && r.right > bubbleLeft;
-          const overlapY = r.top < bubbleBottom && r.bottom > bubbleTop;
-
-          if (overlapX && overlapY) {
-            const MARGIN = 12; // gap between button and bubble
-            // Lift bubble such that its top sits just above the button with a margin
-            newBottom = Math.max(
-              BASE_BOTTOM,
-              (vh - r.top) + hB + MARGIN
-            );
-          }
-        }
-
-        // Apply computed value only if changed to avoid layout thrash
-        const current = parseFloat(getComputedStyle(bubble).bottom) || BASE_BOTTOM;
-        if (Math.abs(current - newBottom) > 0.5) {
-          bubble.style.bottom = newBottom + 'px';
-        }
-      } catch {}
-    };
-
-    const schedule = () => {
-      if (rafId) return;
-      rafId = requestAnimationFrame(reposition);
-    };
-
-    window.addEventListener('scroll', schedule, { passive: true });
-    window.addEventListener('resize', schedule);
-    // Initial position
-    reposition();
-  })();
-
-  // ---- Load existing threads ----
-  async function loadThreads() {
+    let payload = null;
     try {
-      let res = await fetch("/threads");
-      if (!res.ok) { try { res = await fetch("/api/threads"); } catch {} }
-      const data = await res.json();
-      // Reconcile DOM with server data to allow enter/leave animations
-      const dataIds = new Set(data.map((t) => t.id));
-
-      // Add new threads
-      data.forEach((t) => {
-        if (!threadsContainer.querySelector(`[data-id="${t.id}"]`)) {
-          addThreadToDOM(t);
-        }
-      });
-
-      // Animate removal of threads that vanished
-      Array.from(threadsContainer.children).forEach((el) => {
-        const id = Number(el.getAttribute("data-id"));
-        if (!dataIds.has(id)) {
-          el.classList.add("leaving");
-          el.addEventListener(
-            "animationend",
-            () => el.remove(),
-            { once: true }
-          );
-        }
-      });
-    } catch (err) {
-      console.error("Error loading threads:", err);
-    }
-  }
-
-  loadThreads();
-  // Periodically reconcile to animate vanishing threads
-  setInterval(loadThreads, 15000);
-
-  // ---- Most Viewed (top 4) ----
-  const mostViewedWrap = document.getElementById('most-viewed');
-  const MEDIA_EXTENSION_HINTS = {
-    video: ['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.ogg'],
-    audio: ['.mp3', '.wav', '.ogg', '.oga', '.m4a', '.aac', '.flac', '.weba'],
-  };
-  function inferThreadMediaType(thread = {}) {
-    try {
-      const declared = String(thread.mediaType || '').toLowerCase();
-      if (declared === 'video' || declared === 'audio') return declared;
-      if (declared === 'image') return 'image';
-      const src = String(thread.image || '').toLowerCase();
-      if (!src) return null;
-      const match = src.match(/\.([a-z0-9]+)(?:[?#]|$)/);
-      if (!match) return 'image';
-      const ext = `.${match[1]}`;
-      if (MEDIA_EXTENSION_HINTS.video.includes(ext)) return 'video';
-      if (MEDIA_EXTENSION_HINTS.audio.includes(ext)) return 'audio';
-      return 'image';
+      payload = await res.json();
     } catch {
-      return thread?.image ? 'image' : null;
-    }
-  }
-  function buildThreadMediaElement(thread = {}) {
-    if (!thread?.image) return null;
-    const type = inferThreadMediaType(thread) || 'image';
-    let el = null;
-    if (type === 'video') {
-      el = document.createElement('video');
-      el.controls = true;
-      el.preload = 'metadata';
-      el.playsInline = true;
-      el.className = 'thread-media thread-video';
-      try { el.controlsList = 'nodownload noplaybackrate'; } catch {}
-    } else if (type === 'audio') {
-      el = document.createElement('audio');
-      el.controls = true;
-      el.preload = 'metadata';
-      el.className = 'thread-media thread-audio';
-    } else {
-      el = document.createElement('img');
-      el.alt = 'thread media';
-      el.className = 'thread-image thread-media';
-    }
-    el.src = thread.image;
-    return { element: el, type };
-  }
-  function buildMostViewedThumb(thread = {}) {
-    if (!thread?.image) return null;
-    const type = inferThreadMediaType(thread) || 'image';
-    if (type === 'image') {
-      const img = document.createElement('img');
-      img.className = 'mv-thumb';
-      img.src = thread.image;
-      img.alt = 'thread media';
-      return img;
-    }
-    const placeholder = document.createElement('div');
-    placeholder.className = `mv-thumb mv-thumb-placeholder ${type === 'video' ? 'is-video' : 'is-audio'}`;
-    const icon = document.createElement('span');
-    icon.className = 'mv-icon';
-    icon.textContent = type === 'video' ? '🎬' : '🎧';
-    const label = document.createElement('span');
-    label.textContent = type === 'video' ? 'Video attachment' : 'Audio attachment';
-    placeholder.append(icon, label);
-    return placeholder;
-  }
-  async function loadMostViewed() {
-    if (!mostViewedWrap) return;
-    try {
-      let res = await fetch('/threads/most-viewed?limit=4');
-      if (!res.ok) { try { res = await fetch('/api/threads/most-viewed?limit=4'); } catch {} }
-      const data = await res.json();
-      mostViewedWrap.innerHTML = '';
-      data.forEach((t) => {
-        const card = document.createElement('a');
-        card.href = '#threads';
-        card.className = 'mv-card';
-        card.setAttribute('data-id', String(t.id));
-        const thumb = buildMostViewedThumb(t);
-        const title = document.createElement('div');
-        title.className = 'mv-title';
-        title.textContent = t.title || '(untitled)';
-        const meta = document.createElement('div');
-        meta.className = 'mv-meta';
-        meta.textContent = `${(t.views || 0)} views`;
-        if (thumb) card.appendChild(thumb);
-        card.append(title, meta);
-        card.addEventListener('click', (e) => {
-          try {
-            // Scroll to the thread if present, else let it link to feed
-            const el = document.querySelector(`[data-id="${t.id}"]`);
-            if (el) {
-              e.preventDefault();
-              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              el.classList.add('highlight');
-              setTimeout(() => el.classList.remove('highlight'), 1200);
-            }
-          } catch {}
-        });
-        mostViewedWrap.appendChild(card);
-      });
-    } catch (e) { /* ignore */ }
-  }
-  loadMostViewed();
-  setInterval(loadMostViewed, 20000);
-
-  // ---- Add Thread to DOM ----
-  function addThreadToDOM(thread) {
-    const threadDiv = document.createElement("div");
-    threadDiv.classList.add("thread");
-    threadDiv.setAttribute("data-id", thread.id);
-    // Enter animation
-    threadDiv.classList.add("entering");
-    threadDiv.addEventListener("animationend", () => {
-      threadDiv.classList.remove("entering");
-    }, { once: true });
-
-    const title = document.createElement("h3");
-    title.textContent = thread.title || "(untitled)";
-
-    const meta = document.createElement("small");
-    // Server provides ISO timestamp at `timestamp`
-    meta.textContent = new Date(thread.timestamp).toLocaleString();
-
-    // Time remaining indicator
-    const timer = buildThreadTimer(thread.timestamp, thread.expiry);
-
-    // Collapsible controls (+ expand, = collapse)
-    const controls = document.createElement('div');
-    controls.className = 'thread-controls';
-    const btnExpand = document.createElement('button');
-    btnExpand.type = 'button';
-    btnExpand.className = 'mini-btn expand-btn';
-    btnExpand.title = 'Expand';
-    btnExpand.setAttribute('aria-label', 'Expand');
-    btnExpand.textContent = '+';
-    const btnCollapse = document.createElement('button');
-    btnCollapse.type = 'button';
-    btnCollapse.className = 'mini-btn collapse-btn';
-    btnCollapse.title = 'Collapse';
-    btnCollapse.setAttribute('aria-label', 'Collapse');
-    btnCollapse.textContent = '=';
-    controls.append(btnExpand, btnCollapse);
-
-    const COLLAPSE_KEY = (id) => `lurk:threadCollapsed:${id}`;
-    const applyCollapsed = (on) => {
-      threadDiv.classList.toggle('collapsed', !!on);
-      btnExpand.setAttribute('aria-pressed', on ? 'false' : 'true');
-      btnCollapse.setAttribute('aria-pressed', on ? 'true' : 'false');
-    };
-    btnExpand.addEventListener('click', (e) => {
-      e.stopPropagation();
-      applyCollapsed(false);
-      try { localStorage.setItem(COLLAPSE_KEY(thread.id), '0'); } catch {}
-    });
-    btnCollapse.addEventListener('click', (e) => {
-      e.stopPropagation();
-      applyCollapsed(true);
-      try { localStorage.setItem(COLLAPSE_KEY(thread.id), '1'); } catch {}
-    });
-
-    // Click-to-toggle anywhere on the card except interactive/image areas
-    const shouldToggleFromClick = (ev) => {
-      const t = ev.target;
-      // Ignore clicks inside these regions
-      if (t.closest('.thread-controls')) return false;
-      if (t.closest('.reactions')) return false;
-      if (t.closest('.reply-form')) return false;
-      if (t.closest('.reply-toggle')) return false;
-      if (t.closest('.sensitive-mask')) return false;
-      if (t.closest('.thread-image-wrap') || t.closest('.thread-media-wrap')) return false;
-      if (t.closest('.thread-media')) return false;
-      if (t.closest('button, input, textarea, select, a, label')) return false;
-      return true;
-    };
-    threadDiv.addEventListener('click', (ev) => {
-      if (!shouldToggleFromClick(ev)) return;
-      const next = !threadDiv.classList.contains('collapsed');
-      applyCollapsed(next);
-      try { localStorage.setItem(COLLAPSE_KEY(thread.id), next ? '1' : '0'); } catch {}
-    });
-
-    const body = document.createElement("p");
-    body.textContent = thread.body || "";
-
-    // Optional media attachment
-    const mediaInfo = buildThreadMediaElement(thread);
-    if (mediaInfo) {
-      const { element: mediaEl, type: mediaType } = mediaInfo;
-      if (thread.sensitive) {
-        const wrap = document.createElement('div');
-        wrap.className = 'thread-image-wrap thread-media-wrap sensitive';
-        mediaEl.classList.add('blurred');
-
-        const mask = document.createElement('button');
-        mask.type = 'button';
-        mask.className = 'sensitive-mask';
-        mask.setAttribute('aria-pressed', 'false');
-        mask.title = 'Sensitive media — click to reveal';
-        mask.textContent = 'Sensitive — Click to reveal';
-
-        mask.addEventListener('click', () => {
-          const nowReveal = !wrap.classList.contains('revealed');
-          wrap.classList.toggle('revealed', nowReveal);
-          mediaEl.classList.toggle('blurred', !nowReveal);
-          mask.setAttribute('aria-pressed', String(nowReveal));
-          mask.textContent = nowReveal ? 'Hide again' : 'Sensitive — Click to reveal';
-        });
-
-        if (mediaType === 'image') attachInlineZoom(mediaEl);
-        wrap.append(mediaEl, mask);
-        threadDiv.append(wrap);
-      } else {
-        if (mediaType === 'image') attachInlineZoom(mediaEl);
-        threadDiv.append(mediaEl);
-      }
+      payload = null;
     }
 
-    // --- Reactions ---
-    const reacts = document.createElement('div');
-    reacts.className = 'reactions';
-    const EMOJIS = ["👍","❤️","😂","😮","🔥"];
-    const counts = thread.reactions || {};
-    EMOJIS.forEach((em) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'react-btn';
-      b.setAttribute('aria-label', 'react');
-      b.dataset.emoji = em;
-      b.innerHTML = `<span class=\"em\">${em}</span><span class=\"count\">${counts[em] || 0}</span>`;
-      b.addEventListener('click', async () => {
-        if (b.disabled) return;
-        b.disabled = true;
-        b.classList.add('pulse');
-        try {
-          let res = await fetch(`/threads/${thread.id}/react`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ emoji: em })
-          });
-          if (!res.ok) {
-            res = await fetch(`/api/threads/${thread.id}/react`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emoji: em })
-            });
-          }
-          const data = await res.json();
-          const newCount = data?.reactions?.[em];
-          if (typeof newCount === 'number') b.querySelector('.count').textContent = newCount;
-        } catch (e) {
-          // ignore
-        } finally {
-          setTimeout(() => { b.disabled = false; b.classList.remove('pulse'); }, 300);
-        }
-      });
-      reacts.appendChild(b);
-    });
-
-    // --- Replies section ---
-    const actionsRow = document.createElement("div");
-    actionsRow.className = "thread-actions";
-
-    const replyBtn = document.createElement("button");
-    replyBtn.type = "button";
-    replyBtn.className = "reply-toggle";
-    replyBtn.textContent = "Reply";
-
-    // Report button
-    const reportBtn = document.createElement('button');
-    reportBtn.type = 'button';
-    reportBtn.className = 'reply-toggle';
-    reportBtn.textContent = 'Report';
-
-    const repliesWrap = document.createElement("div");
-    repliesWrap.className = "replies";
-
-    // Existing replies
-    const repliesList = document.createElement("div");
-    repliesList.className = "replies-list";
-    (thread.replies || []).forEach(addReplyEl);
-
-    function addReplyEl(r) {
-      const rEl = document.createElement("div");
-      rEl.className = "reply";
-      if (r.id) rEl.setAttribute('data-reply-id', String(r.id));
-      const t = document.createElement("div");
-      t.className = "reply-time";
-      t.textContent = new Date(r.timestamp).toLocaleString();
-      const p = document.createElement("p");
-      p.textContent = r.text;
-      rEl.append(t, p);
-      repliesList.appendChild(rEl);
+    if (!res.ok) {
+      handlePostError(res.status, payload);
+      return;
     }
 
-    // Reply form
-    const replyForm = document.createElement("form");
-    replyForm.className = "reply-form hidden";
-    replyForm.innerHTML = `
-      <textarea name="text" rows="2" maxlength="2000" placeholder="Write a reply..."></textarea>
-      <button type="submit">Post Reply</button>
-    `;
+    const data = payload;
 
-    replyBtn.addEventListener("click", () => {
-      replyForm.classList.toggle("hidden");
-    });
+    // Clear preview + NSFW
+    clearMediaPreview();
+    setNSFW(false);
 
-    replyForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const text = replyForm.querySelector("textarea").value.trim();
-      if (!text) return;
-      try {
-        let res = await fetch(`/threads/${thread.id}/replies`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
-        });
-        if (!res.ok) {
-          res = await fetch(`/api/threads/${thread.id}/replies`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text })
-          });
-        }
-        const r = await res.json();
-        addReplyEl(r);
-        replyForm.querySelector("textarea").value = "";
-        replyForm.classList.add("hidden");
-      } catch (err) {
-        console.error("Error posting reply:", err);
-      }
-    });
+    // Reset form + draft
+    threadForm.reset();
+    localStorage.removeItem("lurk:threadDraft");
 
-    // Report form (anonymous)
-    const reportForm = document.createElement('form');
-    reportForm.className = 'report-form hidden';
-    reportForm.innerHTML = `
-      <label class="sr-only" for="report-reason-${thread.id}">Reason</label>
-      <select id="report-reason-${thread.id}" name="reason">
-        <option value="abuse">Abuse</option>
-        <option value="harassment">Harassment</option>
-        <option value="spam">Spam</option>
-        <option value="nsfw">NSFW / mislabeled</option>
-        <option value="illegal">Illegal content</option>
-        <option value="other">Other</option>
-      </select>
-      <textarea name="details" rows="2" maxlength="2000" placeholder="Optional details (no personal info)"></textarea>
-      <button type="submit">Send Report</button>
-    `;
+    setSuccess();
 
-    reportBtn.addEventListener('click', () => {
-      reportForm.classList.toggle('hidden');
-    });
+    // Add to DOM immediately
+    if (!document.querySelector(`[data-id="${data.id}"]`)) {
+      addThreadToDOM(data);
+    }
 
-    reportForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try {
-        const formData = new FormData(reportForm);
-        const body = {
-          reason: formData.get('reason') || 'other',
-          details: formData.get('details') || '',
-          threadId: thread.id
-        };
-        const res = await fetch('/reports', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        if (!res.ok) throw new Error('Report failed');
-        reportForm.classList.add('hidden');
-        // lightweight confirmation via chat feed
-        try { socket?.emit('chat message', '[system] Report submitted. Thank you.'); } catch {}
-      } catch (err) {
-        console.error('Error sending report', err);
-      }
-    });
+    playChime();
 
-    actionsRow.appendChild(replyBtn);
-    actionsRow.appendChild(reportBtn);
-    repliesWrap.append(repliesList, replyForm, reportForm);
+    // Refresh feeds
+    try { await loadMostViewed(); } catch {}
+    try { await loadThreads(); } catch {}
 
-    // Initial collapsed state from localStorage (optional)
-    try {
-      const raw = localStorage.getItem(COLLAPSE_KEY(thread.id));
-      if (raw === '1') applyCollapsed(true);
-    } catch {}
-
-    threadDiv.append(controls, title, meta, timer, reacts, body, actionsRow, repliesWrap);
-    threadsContainer.prepend(threadDiv);
-    // Small particle glow when created
-    spawnCreationBurst(threadDiv);
-
-    // Schedule local vanish to align with timer if expiry provided
-    try {
-      const end = typeof thread.expiry === 'number' ? thread.expiry : (new Date(thread.timestamp).getTime() + EXPIRY_MS);
-      const ms = Math.max(0, end - Date.now());
-      setTimeout(() => {
-        if (!threadDiv.isConnected) return;
-        threadDiv.classList.add('leaving');
-        threadDiv.addEventListener('animationend', () => threadDiv.remove(), { once: true });
-      }, ms + 50);
-    } catch {}
-
-    // Mark view on first paint in viewport
-    try { observeThreadView(threadDiv, thread.id); } catch {}
+  } catch (err) {
+    console.error("Error submitting thread:", err);
+    threadSubmitBtn.disabled = false;
+    threadSubmitBtn.classList.remove("is-posting");
+    threadSubmitBtn.textContent = "Try again";
+    setTimeout(() => {
+      threadSubmitBtn.textContent = "Post Thread";
+    }, 1500);
   }
+}
 
-  // ---- Real-time updates via Socket.IO ----
+// -------------------------------------------------------
+// HANDLE SPECIFIC POST ERRORS
+// -------------------------------------------------------
+function handlePostError(status, payload) {
+  let msg = null;
+
+  if (payload?.error === "media_too_large") msg = "Video/audio limit is 100 MB.";
+  else if (payload?.error === "image_too_large") msg = "Images must be 5 MB or smaller.";
+  else if (payload?.error === "invalid_file_type") msg = "Unsupported file type.";
+  else if (status === 413) msg = "Upload too large.";
+
+  if (msg) alert(msg);
+
+  threadSubmitBtn.disabled = false;
+  threadSubmitBtn.classList.remove("is-posting");
+  threadSubmitBtn.textContent = "Try again";
+
+  setTimeout(() => {
+    threadSubmitBtn.textContent = "Post Thread";
+  }, 1500);
+}
+
+// ======================================================================
+// BUTTON STATE HELPERS
+// ======================================================================
+function setPosting(on) {
+  if (!threadSubmitBtn) return;
+  threadSubmitBtn.disabled = !!on;
+  threadSubmitBtn.classList.toggle("is-posting", !!on);
+  threadSubmitBtn.textContent = on ? "Posting…" : "Post Thread";
+}
+
+function setSuccess() {
+  if (!threadSubmitBtn) return;
+  threadSubmitBtn.classList.remove("is-posting");
+  threadSubmitBtn.classList.add("is-success");
+  threadSubmitBtn.textContent = "Posted!";
+
+  setTimeout(() => {
+    threadSubmitBtn.classList.remove("is-success");
+    threadSubmitBtn.disabled = false;
+    threadSubmitBtn.textContent = "Post Thread";
+  }, 1000);
+}
+//BATCH FOUR//
+// ======================================================================
+// BATCH 4 — THREAD LOADING + DOM CREATION + REPLIES + REACTIONS
+// ======================================================================
+
+const EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// -------------------------------------------------------
+// LOAD THREADS FROM SERVER
+// -------------------------------------------------------
+async function loadThreads() {
+  if (!threadsContainer) return;
+
   try {
-    if (socket) {
-      // New thread created anywhere
-      socket.on('thread:new', (t) => {
-        try {
-          if (!threadsContainer) return;
-          if (!document.querySelector(`[data-id="${t.id}"]`)) addThreadToDOM(t);
-        } catch {}
-      });
-
-      // New reply for a thread
-      socket.on('reply:new', ({ threadId, reply }) => {
-        try {
-          const threadEl = document.querySelector(`[data-id="${threadId}"]`);
-          if (!threadEl) return;
-          const list = threadEl.querySelector('.replies-list');
-          if (!list) return;
-          if (list.querySelector(`[data-reply-id="${reply.id}"]`)) return;
-          const rEl = document.createElement('div');
-          rEl.className = 'reply';
-          if (reply.id) rEl.setAttribute('data-reply-id', String(reply.id));
-          const t = document.createElement('div');
-          t.className = 'reply-time';
-          t.textContent = new Date(reply.timestamp).toLocaleString();
-          const p = document.createElement('p');
-          p.textContent = reply.text;
-          rEl.append(t, p);
-          list.appendChild(rEl);
-        } catch {}
-      });
-
-      // Reaction counts updated
-      socket.on('reaction:update', ({ threadId, reactions }) => {
-        try {
-          const threadEl = document.querySelector(`[data-id="${threadId}"]`);
-          if (!threadEl) return;
-          threadEl.querySelectorAll('.react-btn').forEach((btn) => {
-            const em = btn.dataset.emoji;
-            const count = reactions?.[em];
-            const span = btn.querySelector('.count');
-            if (span && typeof count === 'number') span.textContent = count;
-          });
-        } catch {}
-      });
-
-      // Hourly purge notification from server
-      socket.on('threads:purged', ({ ids }) => {
-        try {
-          if (!Array.isArray(ids)) return;
-          ids.forEach((id) => {
-            const el = document.querySelector(`[data-id="${id}"]`);
-            if (!el) return;
-            el.classList.add('leaving');
-            el.addEventListener('animationend', () => el.remove(), { once: true });
-          });
-        } catch {}
-      });
+    let res = await fetch("/threads");
+    if (!res.ok) {
+      try { res = await fetch("/api/threads"); } catch {}
     }
-  } catch {}
+    const data = await res.json();
 
-  // ---- View tracking (increment once per session when visible) ----
-  const viewedKey = (id) => `lurk:viewed:${id}`;
-  let viewObserver = null;
-  function ensureViewObserver() {
-    if (viewObserver) return viewObserver;
-    try {
-      viewObserver = new IntersectionObserver((entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const el = entry.target;
-            const id = Number(el.getAttribute('data-id'));
-            if (!id) return;
-            if (sessionStorage.getItem(viewedKey(id))) return;
-            sessionStorage.setItem(viewedKey(id), '1');
-            fetch(`/threads/${id}/view`, { method: 'POST' })
-              .catch(() => fetch(`/api/threads/${id}/view`, { method: 'POST' }).catch(()=>{}));
-          }
-        });
-      }, { threshold: 0.35 });
-    } catch {}
-    return viewObserver;
-  }
-  function observeThreadView(el, id) {
-    try {
-      const obs = ensureViewObserver();
-      if (!obs) return;
-      obs.observe(el);
-    } catch {}
-  }
+    const existing = new Set([...threadsContainer.children].map(el => +el.dataset.id));
+    const incoming = new Set(data.map(t => t.id));
 
-  // ---- Inline Image Zoom (within thread card) ----
-  function attachInlineZoom(img) {
-    try {
-      img.style.cursor = 'zoom-in';
-      img.addEventListener('click', () => {
-        const expanded = img.classList.toggle('expanded');
-        img.style.cursor = expanded ? 'zoom-out' : 'zoom-in';
-      });
-    } catch {}
-  }
+    // ADD NEW THREADS
+    data.forEach(t => {
+      if (!existing.has(t.id)) addThreadToDOM(t);
+    });
 
-  // ---- Subtle chime on success ----
-  let audioCtx = null;
-  let pendingChatChimes = [];
-  function setupAudioPriming() {
-    const prime = () => {
-      try {
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-      } catch {}
-      window.removeEventListener('click', prime);
-      window.removeEventListener('keydown', prime);
-      window.removeEventListener('touchstart', prime);
-      // drain any queued join/leave chimes once we have audio permission
-      try {
-        let offset = 0;
-        while (pendingChatChimes.length) {
-          const k = pendingChatChimes.shift();
-          setTimeout(() => playChatChime(k), offset);
-          offset += 60;
-        }
-      } catch {}
-    };
-    window.addEventListener('click', prime, { once: true });
-    window.addEventListener('keydown', prime, { once: true });
-    window.addEventListener('touchstart', prime, { once: true });
-  }
-
-  function playChime() {
-    try {
-      if (!audioCtx) return; // only play after user interacts at least once
-      const now = audioCtx.currentTime;
-      const gain = audioCtx.createGain();
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.06, now + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
-      gain.connect(audioCtx.destination);
-
-      const tones = [880, 1320]; // A5 + E6
-      const oscillators = tones.map((freq, i) => {
-        const o = audioCtx.createOscillator();
-        o.type = 'sine';
-        o.frequency.setValueAtTime(freq, now);
-        if (i === 1) o.detune.setValueAtTime(8, now);
-        o.connect(gain);
-        o.start(now);
-        o.stop(now + 0.65);
-        return o;
-      });
-    } catch {}
-  }
-  // Join/leave chime
-  function playChatChime(kind = 'join') {
-    try {
-      if (!audioCtx) return; // requires user gesture priming
-      const now = audioCtx.currentTime;
-      const gain = audioCtx.createGain();
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.04, now + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
-      gain.connect(audioCtx.destination);
-
-      const seq = kind === 'leave' ? [880, 660] : [660, 880];
-      seq.forEach((f, i) => {
-        const o = audioCtx.createOscillator();
-        o.type = 'sine';
-        o.frequency.setValueAtTime(f, now + i * 0.05);
-        o.connect(gain);
-        o.start(now + i * 0.05);
-        o.stop(now + 0.3 + i * 0.05);
-      });
-    } catch {}
-  }
-
-  // ---- Creation particle burst ----
-  function spawnCreationBurst(host) {
-    try {
-      const burst = document.createElement('div');
-      burst.className = 'creation-burst';
-      const n = 12;
-      for (let i = 0; i < n; i++) {
-        const p = document.createElement('span');
-        p.className = 'particle';
-        const angle = (Math.PI * 2 * i) / n + Math.random() * 0.6 - 0.3;
-        const radius = 24 + Math.random() * 26;
-        const dx = Math.cos(angle) * radius;
-        const dy = Math.sin(angle) * radius - (8 + Math.random() * 16);
-        const size = 4 + Math.random() * 6;
-        const hue = 190 + Math.floor(Math.random() * 80); // blue -> violet
-        p.style.setProperty('--dx', dx + 'px');
-        p.style.setProperty('--dy', dy + 'px');
-        p.style.setProperty('--size', size + 'px');
-        p.style.setProperty('--col', `hsl(${hue} 100% 70%)`);
-        p.style.animationDelay = (Math.random() * 120) + 'ms';
-        burst.appendChild(p);
+    // REMOVE THREADS NOT RETURNED BY SERVER
+    [...threadsContainer.children].forEach(el => {
+      const id = +el.dataset.id;
+      if (!incoming.has(id)) {
+        el.classList.add("leaving");
+        el.addEventListener("animationend", () => el.remove(), { once: true });
       }
-      host.appendChild(burst);
-      setTimeout(() => burst.remove(), 1200);
-    } catch {}
-  }
-
-  // Additional listeners to trigger chimes for join/leave regardless of rendering
-  if (socket) {
-    socket.on('chat message', (msg) => {
-      const lower = String(msg || '').toLowerCase();
-      if (lower.includes('joined')) queueChatChime('join');
-      else if (lower.includes('left')) queueChatChime('leave');
     });
-    socket.on('chatMessage', (msg) => {
-      const lower = (typeof msg === 'string' ? msg : String(msg?.text || '')).toLowerCase();
-      if (lower.includes('joined')) queueChatChime('join');
-      else if (lower.includes('left')) queueChatChime('leave');
-    });
+
+  } catch (err) {
+    console.error("Error loading threads:", err);
+  }
+}
+
+// Auto-refresh thread list
+setInterval(loadThreads, 15000);
+
+// -------------------------------------------------------
+// ADD THREAD ELEMENT TO DOM
+// -------------------------------------------------------
+function addThreadToDOM(thread) {
+  if (!threadsContainer) return;
+
+  const el = document.createElement("div");
+  el.className = "thread entering";
+  el.dataset.id = thread.id;
+
+  el.addEventListener("animationend", () => {
+    el.classList.remove("entering");
+  }, { once: true });
+
+  // -----------------------------
+  // Title
+  // -----------------------------
+  const title = document.createElement("h3");
+  title.textContent = thread.title || "(untitled)";
+
+  // -----------------------------
+  // Timestamp
+  // -----------------------------
+  const meta = document.createElement("small");
+  meta.textContent = new Date(thread.timestamp).toLocaleString();
+
+  // -----------------------------
+  // Timer bar
+  // -----------------------------
+  const timer = buildThreadTimer(thread.timestamp, thread.expiry);
+
+  // -----------------------------
+  // Expand / collapse controls
+  // -----------------------------
+  const controls = document.createElement("div");
+  controls.className = "thread-controls";
+
+  const expandBtn = document.createElement("button");
+  expandBtn.className = "mini-btn expand-btn";
+  expandBtn.textContent = "+";
+
+  const collapseBtn = document.createElement("button");
+  collapseBtn.className = "mini-btn collapse-btn";
+  collapseBtn.textContent = "=";
+
+  controls.append(expandBtn, collapseBtn);
+
+  const COLLAPSE_KEY = `lurk:threadCollapsed:${thread.id}`;
+
+  function applyCollapsed(on) {
+    el.classList.toggle("collapsed", !!on);
+    expandBtn.setAttribute("aria-pressed", !on);
+    collapseBtn.setAttribute("aria-pressed", on);
   }
 
-  function queueChatChime(kind) {
-    if (audioCtx) return playChatChime(kind);
-    pendingChatChimes.push(kind);
+  expandBtn.addEventListener("click", ev => {
+    ev.stopPropagation();
+    applyCollapsed(false);
+    localStorage.setItem(COLLAPSE_KEY, "0");
+  });
+
+  collapseBtn.addEventListener("click", ev => {
+    ev.stopPropagation();
+    applyCollapsed(true);
+    localStorage.setItem(COLLAPSE_KEY, "1");
+  });
+
+  // Restore collapsed state
+  if (localStorage.getItem(COLLAPSE_KEY) === "1") applyCollapsed(true);
+
+  // Click anywhere on card to toggle
+  el.addEventListener("click", ev => {
+    if (!shouldToggleFromClick(ev)) return;
+    const next = !el.classList.contains("collapsed");
+    applyCollapsed(next);
+    localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+  });
+
+  // -----------------------------
+  // Body
+  // -----------------------------
+  const body = document.createElement("p");
+  body.textContent = thread.body || "";
+
+  // -----------------------------
+  // Media (image / video / audio)
+  // -----------------------------
+  const mediaEl = buildThreadMediaElement(thread);
+  if (mediaEl) el.appendChild(mediaEl);
+
+  // -----------------------------
+  // Reactions
+  // -----------------------------
+  const reacts = buildReactionRow(thread);
+
+  // -----------------------------
+  // Replies + Reports
+  // -----------------------------
+  const repliesSection = buildRepliesAndReports(thread);
+
+  // -----------------------------
+  // Build final structure
+  // -----------------------------
+  el.append(controls, title, meta, timer, reacts, body, repliesSection);
+
+  // -----------------------------
+  // Insert into DOM (top of list)
+  // -----------------------------
+  threadsContainer.prepend(el);
+
+  // -----------------------------
+  // Auto-remove at expiry
+  // -----------------------------
+  scheduleThreadRemoval(el, thread);
+
+  // -----------------------------
+  // Track view count
+  // -----------------------------
+  observeThreadView(el);
+}
+
+// -------------------------------------------------------
+// HELPERS — Click toggle logic
+// -------------------------------------------------------
+function shouldToggleFromClick(ev) {
+  const t = ev.target;
+  return !(
+    t.closest(".thread-controls") ||
+    t.closest(".reactions") ||
+    t.closest(".reply-form") ||
+    t.closest(".reply-toggle") ||
+    t.closest(".sensitive-mask") ||
+    t.closest(".thread-image-wrap") ||
+    t.closest(".thread-media-wrap") ||
+    t.closest("button") ||
+    t.closest("input") ||
+    t.closest("textarea") ||
+    t.closest("select") ||
+    t.closest("a")
+  );
+}
+
+// ======================================================================
+// THREAD MEDIA BUILDER
+// ======================================================================
+function inferThreadMediaType(thread) {
+  const declared = (thread.mediaType || "").toLowerCase();
+  if (declared === "image" || declared === "video" || declared === "audio")
+    return declared;
+
+  const src = (thread.image || "").toLowerCase();
+  if (!src) return null;
+
+  if (/\.(mp4|webm|mov|mkv)$/i.test(src)) return "video";
+  if (/\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(src)) return "audio";
+  return "image";
+}
+
+function buildThreadMediaElement(thread) {
+  if (!thread.image) return null;
+
+  const type = inferThreadMediaType(thread);
+  let el;
+
+  if (type === "video") {
+    el = document.createElement("video");
+    el.className = "thread-media thread-video";
+    el.controls = true;
+    el.src = thread.image;
+  } else if (type === "audio") {
+    el = document.createElement("audio");
+    el.className = "thread-media thread-audio";
+    el.controls = true;
+    el.src = thread.image;
+  } else {
+    el = document.createElement("img");
+    el.className = "thread-image thread-media";
+    el.src = thread.image;
+    el.alt = "thread media";
+    attachInlineZoom(el);
   }
 
-  // ---- Thread Timer Helpers ----
-  function buildThreadTimer(timestampISO, expiryEpoch) {
-    const start = new Date(timestampISO).getTime();
-    const end = typeof expiryEpoch === 'number' ? expiryEpoch : (start + EXPIRY_MS);
-    const duration = Math.max(1, end - start);
+  // Sensitive content
+  if (thread.sensitive) {
     const wrap = document.createElement("div");
-    wrap.className = "thread-timer";
-    wrap.innerHTML = `<div class="bar"></div><span class="timer-text"></span>`;
+    wrap.className = "thread-image-wrap thread-media-wrap sensitive";
 
-    const bar = wrap.querySelector(".bar");
-    const label = wrap.querySelector(".timer-text");
+    el.classList.add("blurred");
 
-    const tick = () => {
-      const now = Date.now();
-      let remaining = end - now;
-      if (remaining < 0) remaining = 0;
-      const pct = Math.max(0, Math.min(1, remaining / duration));
-      bar.style.transform = `scaleX(${pct})`;
-      label.textContent = formatRemaining(remaining);
-      wrap.classList.toggle("low", pct <= 0.2);
-      if (!wrap.isConnected) clearInterval(iv);
-    };
+    const mask = document.createElement("button");
+    mask.type = "button";
+    mask.className = "sensitive-mask";
+    mask.textContent = "Sensitive — Click to reveal";
 
-    const iv = setInterval(tick, 1000);
-    tick();
+    mask.addEventListener("click", () => {
+      const reveal = !wrap.classList.contains("revealed");
+      wrap.classList.toggle("revealed", reveal);
+      el.classList.toggle("blurred", !reveal);
+      mask.textContent = reveal ? "Hide again" : "Sensitive — Click to reveal";
+    });
+
+    wrap.append(el, mask);
     return wrap;
   }
 
-  function formatRemaining(ms) {
-    const totalSec = Math.ceil(ms / 1000);
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return `${m}:${String(s).padStart(2, "0")}`;
+  return el;
+}
+
+// ======================================================================
+// REACTIONS
+// ======================================================================
+function buildReactionRow(thread) {
+  const reacts = document.createElement("div");
+  reacts.className = "reactions";
+
+  const EMOJIS = ["👍", "❤️", "😂", "😮", "🔥"];
+  const counts = thread.reactions || {};
+
+  EMOJIS.forEach((emoji) => {
+    const btn = document.createElement("button");
+    btn.className = "react-btn";
+    btn.dataset.emoji = emoji;
+    btn.innerHTML = `<span class="em">${emoji}</span>
+                     <span class="count">${counts[emoji] || 0}</span>`;
+
+    btn.addEventListener("click", () => sendReaction(thread.id, emoji, btn));
+    reacts.append(btn);
+  });
+
+  return reacts;
+}
+
+async function sendReaction(threadId, emoji, btn) {
+  if (btn.disabled) return;
+
+  btn.disabled = true;
+  btn.classList.add("pulse");
+
+  try {
+    let res = await fetch(`/threads/${threadId}/react`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emoji }),
+    });
+
+    if (!res.ok) {
+      res = await fetch(`/api/threads/${threadId}/react`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emoji }),
+      });
+    }
+
+    const data = await res.json();
+    const newCount = data?.reactions?.[emoji];
+
+    if (typeof newCount === "number") {
+      btn.querySelector(".count").textContent = newCount;
+    }
+
+  } catch (err) {
+    console.error("Reaction error:", err);
+  }
+
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.classList.remove("pulse");
+  }, 300);
+}
+
+// ======================================================================
+// REPLIES + REPORTS
+// ======================================================================
+function buildRepliesAndReports(thread) {
+  const section = document.createElement("div");
+  section.className = "replies";
+
+  const repliesList = document.createElement("div");
+  repliesList.className = "replies-list";
+
+  // Existing replies
+  (thread.replies || []).forEach((rep) => {
+    repliesList.append(buildReplyElement(rep));
+  });
+
+  // Reply button
+  const replyBtn = document.createElement("button");
+  replyBtn.className = "reply-toggle";
+  replyBtn.textContent = "Reply";
+
+  // Reply form
+  const replyForm = document.createElement("form");
+  replyForm.className = "reply-form hidden";
+  replyForm.innerHTML = `
+    <textarea name="text" rows="2" maxlength="2000" placeholder="Write a reply..."></textarea>
+    <button type="submit">Post Reply</button>
+  `;
+
+  replyBtn.addEventListener("click", () => {
+    replyForm.classList.toggle("hidden");
+  });
+
+  replyForm.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    submitReply(thread.id, replyForm, repliesList);
+  });
+
+  // Report button
+  const reportBtn = document.createElement("button");
+  reportBtn.className = "reply-toggle";
+  reportBtn.textContent = "Report";
+
+  // Report form
+  const reportForm = document.createElement("form");
+  reportForm.className = "report-form hidden";
+  reportForm.innerHTML = `
+    <select name="reason">
+      <option value="abuse">Abuse</option>
+      <option value="harassment">Harassment</option>
+      <option value="spam">Spam</option>
+      <option value="nsfw">NSFW / mislabeled</option>
+      <option value="illegal">Illegal</option>
+      <option value="other">Other</option>
+    </select>
+    <textarea name="details" rows="2" maxlength="2000" placeholder="Optional details"></textarea>
+    <button type="submit">Send Report</button>
+  `;
+
+  reportBtn.addEventListener("click", () => {
+    reportForm.classList.toggle("hidden");
+  });
+
+  reportForm.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    submitReport(thread.id, reportForm);
+  });
+
+  // Add to section
+  const actions = document.createElement("div");
+  actions.className = "thread-actions";
+  actions.append(replyBtn, reportBtn);
+
+  section.append(repliesList, replyForm, reportForm, actions);
+
+  return section;
+}
+
+// -------------------------------------------------------
+// INDIVIDUAL REPLY ELEMENT
+// -------------------------------------------------------
+function buildReplyElement(rep) {
+  const d = document.createElement("div");
+  d.className = "reply";
+
+  const t = document.createElement("div");
+  t.className = "reply-time";
+  t.textContent = new Date(rep.timestamp).toLocaleString();
+
+  const p = document.createElement("p");
+  p.textContent = rep.text;
+
+  d.append(t, p);
+  return d;
+}
+
+// -------------------------------------------------------
+// SUBMIT REPLY
+// -------------------------------------------------------
+async function submitReply(threadId, form, list) {
+  const text = form.querySelector("textarea").value.trim();
+  if (!text) return;
+
+  try {
+    let res = await fetch(`/threads/${threadId}/replies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!res.ok) {
+      res = await fetch(`/api/threads/${threadId}/replies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+    }
+
+    const data = await res.json();
+    list.append(buildReplyElement(data));
+
+    form.querySelector("textarea").value = "";
+    form.classList.add("hidden");
+
+  } catch (err) {
+    console.error("Error posting reply:", err);
   }
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init, { once: true });
-} else {
-  // DOMContentLoaded already fired; run now
-  init();
+// -------------------------------------------------------
+// SUBMIT REPORT (ANONYMOUS)
+// -------------------------------------------------------
+async function submitReport(threadId, form) {
+  const reason = form.querySelector("select").value;
+  const details = form.querySelector("textarea").value.trim();
+
+  try {
+    const res = await fetch("/reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId, reason, details }),
+    });
+
+    if (!res.ok) throw new Error("Report failed");
+
+    form.classList.add("hidden");
+    socket?.emit("chat message", "[system] Report submitted.");
+
+  } catch (err) {
+    console.error("Error submitting report:", err);
+  }
 }
+//BATCH FIVE//
+// ======================================================================
+// BATCH 5 — TIMERS • EXPIRY • VIEW-TRACKING • ZOOM • AUDIO • PARTICLES
+// ======================================================================
+
+// -------------------------------------------------------
+// THREAD REMOVAL AT EXPIRY
+// -------------------------------------------------------
+function scheduleThreadRemoval(el, thread) {
+  try {
+    const start = new Date(thread.timestamp).getTime();
+    const end = typeof thread.expiry === "number"
+      ? thread.expiry
+      : start + EXPIRY_MS;
+
+    const ms = Math.max(0, end - Date.now());
+
+    setTimeout(() => {
+      if (!el.isConnected) return;
+      el.classList.add("leaving");
+      el.addEventListener("animationend", () => el.remove(), { once: true });
+    }, ms + 50);
+  } catch (err) {
+    console.error("Error scheduling removal:", err);
+  }
+}
+
+// ======================================================================
+// THREAD TIMER BAR
+// ======================================================================
+function buildThreadTimer(timestampISO, expiryEpoch) {
+  const wrap = document.createElement("div");
+  wrap.className = "thread-timer";
+
+  wrap.innerHTML = `
+    <div class="bar"></div>
+    <span class="timer-text"></span>
+  `;
+
+  const bar = wrap.querySelector(".bar");
+  const text = wrap.querySelector(".timer-text");
+
+  const start = new Date(timestampISO).getTime();
+  const end = typeof expiryEpoch === "number"
+    ? expiryEpoch
+    : start + EXPIRY_MS;
+
+  const duration = Math.max(1, end - start);
+
+  const tick = () => {
+    const now = Date.now();
+    let remaining = Math.max(0, end - now);
+    const pct = remaining / duration;
+
+    bar.style.transform = `scaleX(${pct})`;
+    text.textContent = formatRemaining(remaining);
+
+    wrap.classList.toggle("low", pct <= 0.2);
+
+    if (remaining <= 0 || !wrap.isConnected) {
+      clearInterval(interval);
+    }
+  };
+
+  const interval = setInterval(tick, 1000);
+  tick();
+
+  return wrap;
+}
+
+function formatRemaining(ms) {
+  const sTotal = Math.ceil(ms / 1000);
+  const m = Math.floor(sTotal / 60);
+  const s = sTotal % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// ======================================================================
+// VIEW TRACKING (once per session)
+// ======================================================================
+let viewObserver = null;
+
+function initViewTracking() {
+  try {
+    viewObserver = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+
+        const el = entry.target;
+        const id = Number(el.dataset.id);
+        if (!id) return;
+
+        const key = `lurk:viewed:${id}`;
+        if (sessionStorage.getItem(key)) return;
+
+        sessionStorage.setItem(key, "1");
+
+        fetch(`/threads/${id}/view`, { method: "POST" })
+          .catch(() => fetch(`/api/threads/${id}/view`, { method: "POST" }).catch(() => {}));
+      });
+    }, { threshold: 0.35 });
+  } catch (err) {
+    console.warn("View observer error:", err);
+  }
+}
+
+function observeThreadView(el) {
+  try {
+    if (!viewObserver) initViewTracking();
+    if (viewObserver) viewObserver.observe(el);
+  } catch {}
+}
+
+// ======================================================================
+// INLINE ZOOM FOR IMAGES
+// ======================================================================
+function attachInlineZoom(img) {
+  img.style.cursor = "zoom-in";
+
+  img.addEventListener("click", () => {
+    const expanded = img.classList.toggle("expanded");
+    img.style.cursor = expanded ? "zoom-out" : "zoom-in";
+  });
+}
+
+// ======================================================================
+// AUDIO CONTEXT INITIALIZATION FOR CHIMES
+// ======================================================================
+let audioCtx = null;
+let pendingChatChimes = [];
+
+function setupAudioPriming() {
+  const prime = () => {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    } catch {}
+
+    // Enable sounds queued during load
+    drainPendingChimes();
+
+    window.removeEventListener("click", prime);
+    window.removeEventListener("keydown", prime);
+    window.removeEventListener("touchstart", prime);
+  };
+
+  window.addEventListener("click", prime, { once: true });
+  window.addEventListener("keydown", prime, { once: true });
+  window.addEventListener("touchstart", prime, { once: true });
+}
+
+function drainPendingChimes() {
+  try {
+    let delay = 0;
+    while (pendingChatChimes.length) {
+      const kind = pendingChatChimes.shift();
+      setTimeout(() => playChatChime(kind), delay);
+      delay += 60;
+    }
+  } catch {}
+}
+
+// ======================================================================
+// CHIMES — POST SUCCESS
+// ======================================================================
+function playChime() {
+  if (!audioCtx) return;
+
+  const now = audioCtx.currentTime;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.06, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+  gain.connect(audioCtx.destination);
+
+  [880, 1320].forEach((freq, i) => {
+    const o = audioCtx.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(freq, now);
+    if (i === 1) o.detune.setValueAtTime(8, now);
+    o.connect(gain);
+    o.start(now);
+    o.stop(now + 0.65);
+  });
+}
+
+// ======================================================================
+// CHAT CHIMES — JOIN / LEAVE
+// ======================================================================
+function playChatChime(kind = "join") {
+  if (!audioCtx) {
+    pendingChatChimes.push(kind);
+    return;
+  }
+
+  const now = audioCtx.currentTime;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.04, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+  gain.connect(audioCtx.destination);
+
+  const freqs = kind === "leave" ? [880, 660] : [660, 880];
+
+  freqs.forEach((f, i) => {
+    const o = audioCtx.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(f, now + i * 0.05);
+    o.connect(gain);
+    o.start(now + i * 0.05);
+    o.stop(now + 0.3 + i * 0.05);
+  });
+}
+
+// ======================================================================
+// PARTICLE BURST WHEN THREAD CREATED
+// ======================================================================
+function spawnCreationBurst(host) {
+  try {
+    const burst = document.createElement("div");
+    burst.className = "creation-burst";
+
+    const n = 12;
+    for (let i = 0; i < n; i++) {
+      const p = document.createElement("span");
+      p.className = "particle";
+
+      const angle = (Math.PI * 2 * i) / n + (Math.random() * 0.6 - 0.3);
+      const radius = 24 + Math.random() * 26;
+
+      const dx = Math.cos(angle) * radius;
+      const dy = Math.sin(angle) * radius - (8 + Math.random() * 16);
+
+      const size = 4 + Math.random() * 6;
+      const hue = 190 + Math.floor(Math.random() * 80);
+
+      p.style.setProperty("--dx", dx + "px");
+      p.style.setProperty("--dy", dy + "px");
+      p.style.setProperty("--size", size + "px");
+      p.style.setProperty("--col", `hsl(${hue} 100% 70%)`);
+      p.style.animationDelay = Math.random() * 120 + "ms";
+
+      burst.appendChild(p);
+    }
+
+    host.appendChild(burst);
+    setTimeout(() => burst.remove(), 1200);
+  } catch {}
+}
+//BATCH SIX//
+// ======================================================================
+// BATCH 6 — MOST VIEWED • BOTTOM NAV • HERO COLLAPSE • BUBBLE REPOSITION
+// ======================================================================
+
+// ======================================================================
+// MOST VIEWED THREADS
+// ======================================================================
+
+function inferMostViewedType(src) {
+  if (!src) return "image";
+
+  const low = src.toLowerCase();
+  if (/\.(mp4|webm|mov|mkv)$/.test(low)) return "video";
+  if (/\.(mp3|wav|ogg|m4a|aac|flac)$/.test(low)) return "audio";
+  return "image";
+}
+
+function buildMostViewedThumb(thread) {
+  const type = inferMostViewedType(thread.image);
+
+  if (type === "image") {
+    const img = document.createElement("img");
+    img.className = "mv-thumb";
+    img.src = thread.image;
+    img.alt = "Most viewed media";
+    return img;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = `mv-thumb mv-thumb-placeholder ${type}`;
+
+  const icon = document.createElement("span");
+  icon.className = "mv-icon";
+  icon.textContent = type === "video" ? "🎬" : "🎧";
+
+  const label = document.createElement("span");
+  label.textContent = type === "video" ? "Video" : "Audio";
+
+  wrap.append(icon, label);
+  return wrap;
+}
+
+async function loadMostViewed() {
+  if (!mostViewedWrap) return;
+
+  try {
+    let res = await fetch("/threads/most-viewed?limit=4");
+    if (!res.ok) {
+      try { res = await fetch("/api/threads/most-viewed?limit=4"); } catch {}
+    }
+
+    const data = await res.json();
+    mostViewedWrap.innerHTML = "";
+
+    data.forEach((t) => {
+      const card = document.createElement("a");
+      card.href = "#threads";
+      card.className = "mv-card";
+      card.dataset.id = t.id;
+
+      const thumb = buildMostViewedThumb(t);
+
+      const title = document.createElement("div");
+      title.className = "mv-title";
+      title.textContent = t.title || "(untitled)";
+
+      const meta = document.createElement("div");
+      meta.className = "mv-meta";
+      meta.textContent = `${t.views || 0} views`;
+
+      if (thumb) card.appendChild(thumb);
+      card.append(title, meta);
+
+      // Scroll to thread if present
+      card.addEventListener("click", (ev) => {
+        const el = document.querySelector(`[data-id="${t.id}"]`);
+        if (el) {
+          ev.preventDefault();
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          el.classList.add("highlight");
+          setTimeout(() => el.classList.remove("highlight"), 1200);
+        }
+      });
+
+      mostViewedWrap.appendChild(card);
+    });
+
+  } catch (err) {
+    console.error("Most viewed error:", err);
+  }
+}
+
+loadMostViewed();
+setInterval(loadMostViewed, 20000);
+
+// ======================================================================
+// BOTTOM NAVIGATION — ACTIVE LINK + COLLAPSE TOGGLE
+// ======================================================================
+
+function initBottomNav() {
+  if (!bottomNav) return;
+
+  const links = bottomNav.querySelectorAll("a");
+
+  const normalize = (p) => {
+    if (!p) return "/";
+    p = p.split("#")[0].split("?")[0];
+    if (p.endsWith("/index.html")) p = p.replace(/\/index\.html$/, "/");
+    return p || "/";
+  };
+
+  const path = normalize(window.location.pathname);
+
+  let activeLink = null;
+
+  links.forEach((a) => {
+    try {
+      const href = normalize(new URL(a.href).pathname);
+      if (href === path) activeLink = a;
+    } catch {}
+  });
+
+  if (!activeLink && links.length) activeLink = links[0];
+
+  links.forEach((a) =>
+    a.classList.toggle("active", a === activeLink)
+  );
+
+  // Collapse toggle (right-side button)
+  if (navEllipsis) {
+    navEllipsis.addEventListener("click", () => {
+      bottomNav.classList.toggle("collapsed");
+    });
+  }
+}
+
+// ======================================================================
+// HERO CARD COLLAPSE
+// ======================================================================
+
+function initHeroCard() {
+  if (!heroCard || !heroCollapseBtn) return;
+
+  const KEY = "lurk:heroCollapsed";
+
+  function setCollapsed(on) {
+    heroCard.classList.toggle("is-collapsed", on);
+    heroSection?.classList.toggle("is-collapsed", on);
+    heroSection?.classList.toggle("is-docked", on);
+
+    heroCollapseBtn.textContent = on ? "+" : "−";
+    heroCollapseBtn.setAttribute("aria-expanded", on ? "false" : "true");
+
+    if (on) {
+      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+    }
+  }
+
+  // Restore
+  try {
+    if (sessionStorage.getItem(KEY) === "1") {
+      setCollapsed(true);
+    }
+  } catch {}
+
+  heroCollapseBtn.addEventListener("click", () => {
+    const collapsed = heroCard.classList.contains("is-collapsed");
+    setCollapsed(!collapsed);
+
+    try {
+      sessionStorage.setItem(KEY, collapsed ? "0" : "1");
+    } catch {}
+  });
+}
+
+// ======================================================================
+// CHAT BUBBLE REPOSITION (keeps bubble away from Post Thread button)
+// ======================================================================
+
+function initBubbleReposition() {
+  const bubble = document.getElementById("chat-bubble");
+  if (!bubble) return;
+
+  const getBase = () => {
+    const cs = getComputedStyle(bubble);
+    return {
+      bottom: parseFloat(cs.bottom) || 20,
+      right: parseFloat(cs.right) || 25,
+    };
+  };
+
+  let raf = null;
+
+  const reposition = () => {
+    raf = null;
+
+    try {
+      const submit = threadSubmitBtn;
+      if (!submit) return;
+
+      const base = getBase();
+      const bh = bubble.offsetHeight;
+      const bw = bubble.offsetWidth;
+
+      const r = submit.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      const bubbleLeft = vw - base.right - bw;
+      const bubbleRight = vw - base.right;
+      const bubbleTop = vh - base.bottom - bh;
+      const bubbleBottom = vh - base.bottom;
+
+      const overlapX = r.left < bubbleRight && r.right > bubbleLeft;
+      const overlapY = r.top < bubbleBottom && r.bottom > bubbleTop;
+
+      let newBottom = base.bottom;
+
+      if (overlapX && overlapY) {
+        const margin = 12;
+        newBottom = Math.max(base.bottom, vh - r.top + bh + margin);
+      }
+
+      const current = parseFloat(getComputedStyle(bubble).bottom) || base.bottom;
+      if (Math.abs(current - newBottom) > 0.5) {
+        bubble.style.bottom = newBottom + "px";
+      }
+
+    } catch {}
+  };
+
+  const schedule = () => {
+    if (raf) return;
+    raf = requestAnimationFrame(reposition);
+  };
+
+  window.addEventListener("scroll", schedule, { passive: true });
+  window.addEventListener("resize", schedule);
+
+  reposition();
+}
+//BATCH SEVEN//
+// ======================================================================
+// BATCH 7 — REAL-TIME SOCKET UPDATES (THREADS • REPLIES • REACTIONS)
+// ======================================================================
+
+// Ensure socket exists before registering listeners
+if (socket) {
+
+  // ---------------------------------------------------
+  // NEW THREAD CREATED (any user)
+  // ---------------------------------------------------
+  socket.on("thread:new", (thread) => {
+    try {
+      if (!threadsContainer) return;
+
+      // Avoid duplicates
+      if (!document.querySelector(`[data-id="${thread.id}"]`)) {
+        addThreadToDOM(thread);
+      }
+    } catch (err) {
+      console.error("Error handling thread:new:", err);
+    }
+  });
+
+  // ---------------------------------------------------
+  // NEW REPLY ADDED
+  // ---------------------------------------------------
+  socket.on("reply:new", ({ threadId, reply }) => {
+    try {
+      const threadEl = document.querySelector(`[data-id="${threadId}"]`);
+      if (!threadEl) return;
+
+      const list = threadEl.querySelector(".replies-list");
+      if (!list) return;
+
+      // Avoid duplicate replies
+      if (reply.id && list.querySelector(`[data-reply-id="${reply.id}"]`)) {
+        return;
+      }
+
+      const rEl = document.createElement("div");
+      rEl.className = "reply";
+      rEl.dataset.replyId = reply.id;
+
+      const t = document.createElement("div");
+      t.className = "reply-time";
+      t.textContent = new Date(reply.timestamp).toLocaleString();
+
+      const p = document.createElement("p");
+      p.textContent = reply.text;
+
+      rEl.append(t, p);
+      list.appendChild(rEl);
+
+    } catch (err) {
+      console.error("Error handling reply:new:", err);
+    }
+  });
+
+  // ---------------------------------------------------
+  // REACTION COUNT UPDATE (sync)
+  // ---------------------------------------------------
+  socket.on("reaction:update", ({ threadId, reactions }) => {
+    try {
+      const threadEl = document.querySelector(`[data-id="${threadId}"]`);
+      if (!threadEl) return;
+
+      threadEl.querySelectorAll(".react-btn").forEach((btn) => {
+        const emoji = btn.dataset.emoji;
+        const count = reactions?.[emoji];
+
+        if (typeof count === "number") {
+          const c = btn.querySelector(".count");
+          if (c) c.textContent = count;
+        }
+      });
+
+    } catch (err) {
+      console.error("Error updating reactions:", err);
+    }
+  });
+
+  // ---------------------------------------------------
+  // HOURLY PURGE EVENT
+  // ---------------------------------------------------
+  socket.on("threads:purged", ({ ids }) => {
+    try {
+      if (!Array.isArray(ids)) return;
+
+      ids.forEach((id) => {
+        const el = document.querySelector(`[data-id="${id}"]`);
+        if (!el) return;
+
+        el.classList.add("leaving");
+        el.addEventListener("animationend", () => el.remove(), { once: true });
+      });
+
+    } catch (err) {
+      console.error("Error handling threads:purged:", err);
+    }
+  });
+
+} // end if(socket)
+//BATCH 8//
+// ======================================================================
+// BATCH 8 — UTILITY HELPERS (ZOOM • SCROLL • CLICK GUARDS)
+// ======================================================================
+
+// -------------------------------------------------------
+// SAFELY CHECK IF CLICK SHOULD NOT TOGGLE THREAD COLLAPSE
+// (Used in Batch 4 — included here again in case future
+// code references it; ensures consistent behavior.)
+// -------------------------------------------------------
+function isInteractiveElement(target) {
+  return (
+    target.closest(".thread-controls") ||
+    target.closest(".reactions") ||
+    target.closest(".reply-form") ||
+    target.closest(".reply-toggle") ||
+    target.closest(".sensitive-mask") ||
+    target.closest(".thread-image-wrap") ||
+    target.closest(".thread-media-wrap") ||
+    target.closest(".thread-media") ||
+    target.closest("button") ||
+    target.closest("input") ||
+    target.closest("textarea") ||
+    target.closest("select") ||
+    target.closest("a") ||
+    target.closest("label")
+  );
+}
+
+function shouldToggleFromClick(event) {
+  return !isInteractiveElement(event.target);
+}
+
+// -------------------------------------------------------
+// SMOOTH SCROLL TO AN ELEMENT + highlight pulse
+// -------------------------------------------------------
+function scrollToThreadEl(el) {
+  try {
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("highlight");
+    setTimeout(() => el.classList.remove("highlight"), 1200);
+  } catch {}
+}
+
+// -------------------------------------------------------
+// SMOOTH SCROLL HELPERS
+// -------------------------------------------------------
+function smoothScrollToTop() {
+  try {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
+}
+
+function smoothScrollToElement(elementSelector) {
+  try {
+    const el = document.querySelector(elementSelector);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth" });
+    }
+  } catch {}
+}
+
+// -------------------------------------------------------
+// GENERIC DOM CREATION HELPERS
+// -------------------------------------------------------
+function createEl(tag, className = "", text = "") {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text) el.textContent = text;
+  return el;
+}
+
+function createButton(className, label, onClick) {
+  const btn = document.createElement("button");
+  btn.className = className;
+  btn.textContent = label;
+  if (onClick) btn.addEventListener("click", onClick);
+  return btn;
+}
+
+// -------------------------------------------------------
+// ENSURES A FUNCTION ONLY RUNS ONCE
+// (Useful for animations or DOM transitions)
+// -------------------------------------------------------
+function runOnce(fn) {
+  let executed = false;
+  return (...args) => {
+    if (executed) return;
+    executed = true;
+    fn(...args);
+  };
+}
+
+// -------------------------------------------------------
+// THROTTLE & DEBOUNCE UTILITIES (used in scroll/resize)
+// -------------------------------------------------------
+function throttle(fn, delay) {
+  let last = 0;
+  return (...args) => {
+    const now = Date.now();
+    if (now - last >= delay) {
+      last = now;
+      fn(...args);
+    }
+  };
+}
+
+function debounce(fn, delay) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
+
+// -------------------------------------------------------
+// SAFE JSON PARSING
+// -------------------------------------------------------
+function safeJSON(str, fallback = null) {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return fallback;
+  }
+}
+
+// -------------------------------------------------------
+// DEBUG HELPER
+// -------------------------------------------------------
+function debugLog(...msg) {
+  if (window.__LURK_DEBUG__) {
+    console.log("[LURK DEBUG]", ...msg);
+  }
+}
+
+// -------------------------------------------------------
+// UNIVERSAL ELEMENT TOGGLE (simplifies many handlers)
+// -------------------------------------------------------
+function toggleHidden(el, forceState = null) {
+  if (!el) return;
+
+  if (forceState === true) {
+    el.classList.add("hidden");
+  } else if (forceState === false) {
+    el.classList.remove("hidden");
+  } else {
+    el.classList.toggle("hidden");
+  }
+}
+//BATCH NINE//
+// ======================================================================
+// BATCH 9 — REPLIES • REPORTING • REACTION UPDATES • VIEW OBSERVER
+// ======================================================================
+
+// -------------------------------------------------------
+// ADD A REPLY ELEMENT TO A SPECIFIC THREAD
+// Called by WebSocket or by submitting a reply form
+// -------------------------------------------------------
+function addReplyToThread(threadId, reply) {
+  try {
+    const threadEl = document.querySelector(`[data-id="${threadId}"]`);
+    if (!threadEl) return;
+
+    const list = threadEl.querySelector(".replies-list");
+    if (!list) return;
+
+    // Prevent duplicates
+    if (reply.id && list.querySelector(`[data-reply-id="${reply.id}"]`)) return;
+
+    const rEl = document.createElement("div");
+    rEl.className = "reply";
+    if (reply.id) rEl.dataset.replyId = reply.id;
+
+    const t = document.createElement("div");
+    t.className = "reply-time";
+    t.textContent = new Date(reply.timestamp).toLocaleString();
+
+    const p = document.createElement("p");
+    p.textContent = reply.text;
+
+    rEl.append(t, p);
+    list.appendChild(rEl);
+
+    list.scrollTop = list.scrollHeight;
+  } catch (err) {
+    console.error("[Lurk] Failed to add reply:", err);
+  }
+}
+
+// -------------------------------------------------------
+// REPORT THREAD HANDLER
+// Called from the report form inside each thread card
+// -------------------------------------------------------
+async function submitThreadReport(threadId, form) {
+  try {
+    const formData = new FormData(form);
+
+    const payload = {
+      reason: formData.get("reason") || "other",
+      details: formData.get("details") || "",
+      threadId,
+    };
+
+    const res = await fetch("/reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) throw new Error("Report failed");
+
+    form.classList.add("hidden");
+
+    // Optional: notify via system message
+    try {
+      window.__LURK_SOCKET__?.emit(
+        "chat message",
+        "[system] Anonymous report submitted."
+      );
+    } catch {}
+
+    return true;
+  } catch (err) {
+    console.error("[Lurk] Error submitting report:", err);
+    return false;
+  }
+}
+
+// -------------------------------------------------------
+// REACTION UPDATE (called by WebSocket broadcast)
+// -------------------------------------------------------
+function updateThreadReactions(threadId, reactions) {
+  try {
+    const threadEl = document.querySelector(`[data-id="${threadId}"]`);
+    if (!threadEl) return;
+
+    threadEl.querySelectorAll(".react-btn").forEach((btn) => {
+      const emoji = btn.dataset.emoji;
+      const count = reactions?.[emoji];
+      const countEl = btn.querySelector(".count");
+      if (countEl && typeof count === "number") {
+        countEl.textContent = count;
+      }
+    });
+  } catch (err) {
+    console.error("[Lurk] Failed to update reactions:", err);
+  }
+}
+
+// -------------------------------------------------------
+// INTERSECTION OBSERVER FOR VIEW COUNT
+// Counts a view once per session (client-side)
+// -------------------------------------------------------
+let __lurkViewObserver = null;
+
+function ensureViewObserver() {
+  if (__lurkViewObserver) return __lurkViewObserver;
+
+  try {
+    __lurkViewObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+
+          const el = entry.target;
+          const id = Number(el.dataset.id);
+          if (!id) return;
+
+          const key = `lurk:viewed:${id}`;
+          if (sessionStorage.getItem(key)) return;
+
+          sessionStorage.setItem(key, "1");
+
+          fetch(`/threads/${id}/view`, { method: "POST" }).catch(() =>
+            fetch(`/api/threads/${id}/view`, { method: "POST" }).catch(() => {})
+          );
+        });
+      },
+      { threshold: 0.35 }
+    );
+  } catch {
+    __lurkViewObserver = null;
+  }
+
+  return __lurkViewObserver;
+}
+
+// Attach observer to a thread element
+function observeThreadView(el) {
+  try {
+    const obs = ensureViewObserver();
+    if (obs) obs.observe(el);
+  } catch {}
+}
+
+// -------------------------------------------------------
+// INLINE IMAGE ZOOM (click → enlarge inside thread)
+// -------------------------------------------------------
+function attachInlineZoom(img) {
+  try {
+    img.style.cursor = "zoom-in";
+    img.addEventListener("click", () => {
+      const expanded = img.classList.toggle("expanded");
+      img.style.cursor = expanded ? "zoom-out" : "zoom-in";
+    });
+  } catch {}
+}
+
+// -------------------------------------------------------
+// THREAD TIMER (used by addThreadToDOM)
+// -------------------------------------------------------
+function buildThreadTimer(timestampISO, expiryEpoch) {
+  const start = new Date(timestampISO).getTime();
+  const end = typeof expiryEpoch === "number" ? expiryEpoch : start + 86400 * 1000;
+  const duration = Math.max(1, end - start);
+
+  const wrap = document.createElement("div");
+  wrap.className = "thread-timer";
+  wrap.innerHTML = `
+    <div class="bar"></div>
+    <span class="timer-text"></span>
+  `;
+
+  const bar = wrap.querySelector(".bar");
+  const label = wrap.querySelector(".timer-text");
+
+  const tick = () => {
+    const now = Date.now();
+    let remaining = end - now;
+    if (remaining < 0) remaining = 0;
+
+    const pct = Math.max(0, Math.min(1, remaining / duration));
+    bar.style.transform = `scaleX(${pct})`;
+    label.textContent = formatRemaining(remaining);
+
+    wrap.classList.toggle("low", pct <= 0.2);
+
+    if (!wrap.isConnected) clearInterval(iv);
+  };
+
+  const iv = setInterval(tick, 1000);
+  tick();
+
+  return wrap;
+}
+
+function formatRemaining(ms) {
+  const totalSec = Math.ceil(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+//BATCH TEN//
+// ======================================================================
+// BATCH 10 — CREATION BURST • AUDIO CHIMES • NAV HIGHLIGHT • BUBBLE FIX
+// ======================================================================
+
+// -------------------------------------------------------
+// CREATION BURST EFFECT FOR NEW THREADS
+// -------------------------------------------------------
+function spawnCreationBurst(host) {
+  try {
+    const burst = document.createElement("div");
+    burst.className = "creation-burst";
+
+    const PARTICLES = 12;
+    for (let i = 0; i < PARTICLES; i++) {
+      const p = document.createElement("span");
+      p.className = "particle";
+
+      const angle = (Math.PI * 2 * i) / PARTICLES + (Math.random() * 0.6 - 0.3);
+      const radius = 24 + Math.random() * 26;
+      const dx = Math.cos(angle) * radius;
+      const dy = Math.sin(angle) * radius - (8 + Math.random() * 16);
+      const size = 4 + Math.random() * 6;
+      const hue = 190 + Math.floor(Math.random() * 80); // blue→violet
+
+      p.style.setProperty("--dx", dx + "px");
+      p.style.setProperty("--dy", dy + "px");
+      p.style.setProperty("--size", size + "px");
+      p.style.setProperty("--col", `hsl(${hue} 100% 70%)`);
+      p.style.animationDelay = Math.random() * 120 + "ms";
+
+      burst.appendChild(p);
+    }
+
+    host.appendChild(burst);
+    setTimeout(() => burst.remove(), 1200);
+  } catch (err) {
+    console.warn("[Lurk] Failed to spawn creation burst:", err);
+  }
+}
+
+// -------------------------------------------------------
+// AUDIO SYSTEM — PRIMING + POST CHIME + JOIN/LEAVE CHIMES
+// -------------------------------------------------------
+
+function primeAudioContext() {
+  const prime = () => {
+    try {
+      if (!audioCtx)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    } catch {}
+    window.removeEventListener("click", prime);
+    window.removeEventListener("keydown", prime);
+    window.removeEventListener("touchstart", prime);
+
+    // play any queued chimes
+    let delay = 0;
+    pendingChimes.forEach((kind) => {
+      setTimeout(() => playChatChime(kind), delay);
+      delay += 60;
+    });
+    pendingChimes = [];
+  };
+
+  window.addEventListener("click", prime, { once: true });
+  window.addEventListener("keydown", prime, { once: true });
+  window.addEventListener("touchstart", prime, { once: true });
+}
+
+function playPostChime() {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.06, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+  gain.connect(audioCtx.destination);
+
+  const tones = [880, 1320]; // A5 + E6
+  tones.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, now);
+    if (i === 1) osc.detune.setValueAtTime(8, now);
+    osc.connect(gain);
+    osc.start(now);
+    osc.stop(now + 0.65);
+  });
+}
+
+function playChatChime(kind) {
+  if (!audioCtx) {
+    pendingChimes.push(kind);
+    return;
+  }
+
+  const now = audioCtx.currentTime;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.04, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+  gain.connect(audioCtx.destination);
+
+  const sequence = kind === "leave" ? [880, 660] : [660, 880];
+
+  sequence.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, now + i * 0.05);
+    osc.connect(gain);
+    osc.start(now + i * 0.05);
+    osc.stop(now + 0.3 + i * 0.05);
+  });
+}
+
+function chimeForJoinLeave(msg) {
+  try {
+    const text = typeof msg === "string" ? msg : msg?.text || "";
+    const t = text.toLowerCase();
+    if (t.includes("joined")) return playChatChime("join");
+    if (t.includes("left")) return playChatChime("leave");
+  } catch {}
+}
+
+// -------------------------------------------------------
+// BOTTOM NAV ACTIVE LINK HIGHLIGHTING
+// -------------------------------------------------------
+function updateBottomNavActive() {
+  const nav = document.querySelector(".nav-bar, .bottom-nav");
+  if (!nav) return;
+
+  const links = nav.querySelectorAll("a");
+
+  const normalize = (p) => {
+    try {
+      if (!p) return "/";
+      p = p.split("#")[0].split("?")[0];
+      if (p.endsWith("/index.html")) p = p.replace("/index.html", "/");
+      return p || "/";
+    } catch {
+      return "/";
+    }
+  };
+
+  const current = normalize(window.location.pathname);
+  let activeLink = null;
+
+  links.forEach((a) => {
+    try {
+      const href = a.getAttribute("href");
+      if (!href) return;
+      const linkPath = normalize(new URL(href, window.location.origin).pathname);
+      if (linkPath === current) activeLink = a;
+    } catch {}
+  });
+
+  links.forEach((a) => a.classList.remove("active"));
+  if (activeLink) activeLink.classList.add("active");
+}
+
+// -------------------------------------------------------
+// REPOSITION CHAT BUBBLE WHEN POST BUTTON OVERLAPS
+// -------------------------------------------------------
+function setupChatBubbleReposition() {
+  const bubble = document.getElementById("chat-bubble");
+  if (!bubble) return;
+
+  const postBtn =
+    document.querySelector("#thread-form button[type='submit']") ||
+    document.querySelector("#thread-form button");
+
+  if (!postBtn) return;
+
+  let rafId = null;
+
+  const reposition = () => {
+    rafId = null;
+
+    const bubbleRect = bubble.getBoundingClientRect();
+    const postRect = postBtn.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const bubbleLeft = bubbleRect.left;
+    const bubbleRight = bubbleRect.right;
+    const bubbleTop = bubbleRect.top;
+    const bubbleBottom = bubbleRect.bottom;
+
+    const overlapX = postRect.left < bubbleRight && postRect.right > bubbleLeft;
+    const overlapY = postRect.top < bubbleBottom && postRect.bottom > bubbleTop;
+
+    if (overlapX && overlapY) {
+      bubble.style.bottom = postRect.height + 40 + "px";
+    } else {
+      bubble.style.bottom = "";
+    }
+  };
+
+  const schedule = () => {
+    if (!rafId) rafId = requestAnimationFrame(reposition);
+  };
+
+  window.addEventListener("scroll", schedule, { passive: true });
+  window.addEventListener("resize", schedule);
+  schedule();
+}
+
+// -------------------------------------------------------
+// EXPORT GLOBAL TO WINDOW (useful for debugging)
+// -------------------------------------------------------
+window.__LURK_UTILS__ = {
+  debugLog,
+  scrollToThreadEl,
+  addReplyToThread,
+  updateThreadReactions,
+  spawnCreationBurst,
+  playChatChime,
+};
+
+// Initialize audio priming
+primeAudioContext();
+
+// Initialize nav highlighting
+updateBottomNavActive();
+window.addEventListener("popstate", updateBottomNavActive);

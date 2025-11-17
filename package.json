@@ -4,15 +4,15 @@
   "version": "1.2.1",
   "description": "Lurk — ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every 24 hours.",
   "main": "server.js",
-"scripts": {
-  "dev": "nodemon server.js",
-  "build": "next build",
-  "start": "node server.js",
-  "lint": "next lint"
-},
-"engines": {
-  "node": "20.x"
-},
+  "scripts": {
+    "dev": "nodemon server.js",
+    "build": "next build",
+    "start": "node server.js",
+    "lint": "next lint"
+  },
+  "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
     "better-sqlite3": "^9.4.0",
     "express": "^4.18.2",
@@ -28,6 +28,7 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "eslint": "^8.57.1",
     "nodemon": "^3.1.0"
   }
 }
