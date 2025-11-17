@@ -629,6 +629,7 @@ main > .glass-card.blog-feature {
 .post-content p {
   line-height: 1.55;
   margin-bottom: var(--s-3);
+  text-align: center;
 }
 
 /* =========================
@@ -667,11 +668,13 @@ main > .glass-card.blog-feature {
 .blog-card h3 {
   margin-top: 0;
   margin-bottom: var(--s-3);
+  text-align: center;
 }
 
 .blog-card p {
   line-height: 1.55;
   margin-bottom: var(--s-3);
+  text-align: center;
 }
 
 /* =========================
