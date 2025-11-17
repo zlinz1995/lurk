@@ -41,7 +41,8 @@ function spawnCreationBurst(host) {
 // -------------------------------------------------------
 // AUDIO SYSTEM — PRIMING + POST CHIME + JOIN/LEAVE CHIMES
 // -------------------------------------------------------
-let pendingChimes = [];
+window.__LURK_PENDING_CHIMES__ = window.__LURK_PENDING_CHIMES__ || [];
+const pendingChimes = window.__LURK_PENDING_CHIMES__;
 
 function primeAudioContext() {
   const prime = () => {
