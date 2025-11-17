@@ -2,7 +2,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 
 const SITE_NAME = 'Lurk';
-const DEFAULT_DESCRIPTION = 'Lurk is an ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every hour.';
+const DEFAULT_DESCRIPTION = 'Lurk is an ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every 24 hours.';
 const DEFAULT_IMAGE = '/background.jpg'; // Consider replacing with /social.jpg (1200x630)
 
 export default function SEO({

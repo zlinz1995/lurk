@@ -2,7 +2,7 @@ import Layout from '../components/Layout';
 
 export default function Home() {
   return (
-    <Layout title="Lurk" subtitle="Posts that vanish each hour — nothing lasts forever." hideHeader>
+    <Layout title="Lurk" subtitle="Posts that vanish every 24 hours — nothing lasts forever." hideHeader>
       {/* Combined hero + new thread, slightly smaller */}
       <section className="hero-form-section">
         <div className="hero-card">
@@ -10,7 +10,7 @@ export default function Home() {
             <img src="/favicon.png" alt="Lurk logo" className="logo" />
             <div className="hero-text">
               <h1 className="hero-title">Lurk</h1>
-              <p className="hero-sub">Posts that vanish each hour — nothing lasts forever.</p>
+              <p className="hero-sub">Posts that vanish every 24 hours — nothing lasts forever.</p>
             </div>
             <button id="hero-collapse" className="hero-collapse" aria-label="Collapse form" aria-expanded="true" title="Collapse">−</button>
           </div>
@@ -22,19 +22,40 @@ export default function Home() {
             <label htmlFor="body">Body</label>
             <textarea id="body" name="body" placeholder="Add some context (optional)"></textarea>
 
-            <label htmlFor="image">Image</label>
-            <input type="file" id="image" name="image" accept="image/*" />
+            <label htmlFor="image">Media</label>
+            <input
+              type="file"
+              id="image"
+              name="image"
+              accept="image/*,video/mp4,video/webm,audio/mpeg,audio/mp3,audio/wav,audio/webm,audio/ogg"
+            />
             <div className="nsfw-row">
-              <button type="button" id="nsfw-toggle" className="nsfw-toggle" aria-pressed="false" title="Mark as NSFW (blur image)">NSFW</button>
+              <button type="button" id="nsfw-toggle" className="nsfw-toggle" aria-pressed="false" title="Mark as NSFW (blur media)">NSFW</button>
               <input type="hidden" id="sensitive" name="sensitive" value="" />
             </div>
 
-            <div id="image-preview" className="image-preview" aria-live="polite">
-              <img id="image-preview-img" alt="Image preview" className="thread-image" style={{display:'none'}} />
+            <div id="media-preview" className="image-preview media-preview" aria-live="polite">
+              <img id="media-preview-img" alt="Media preview" className="thread-image thread-media" style={{display:'none'}} />
+              <video
+                id="media-preview-video"
+                className="thread-video thread-media"
+                style={{display:'none'}}
+                playsInline
+                controls
+                preload="metadata"
+                muted
+              />
+              <audio
+                id="media-preview-audio"
+                className="thread-audio thread-media"
+                style={{display:'none'}}
+                controls
+                preload="metadata"
+              />
             </div>
 
             <button type="button" id="thread-submit">Post Thread</button>
-            <small>Max 5 MB — jpg/png/webp/gif</small>
+            <small>Images up to 5 MB — video/audio up to 100 MB (jpg/png/webp/gif/mp4/webm/mp3/wav)</small>
           </form>
         </div>
       </section>

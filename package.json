@@ -2,7 +2,7 @@
   "type": "module",
   "name": "lurk",
   "version": "1.2.1",
-  "description": "Lurk — ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every hour.",
+  "description": "Lurk — ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every 24 hours.",
   "main": "server.js",
 "scripts": {
   "dev": "nodemon server.js",

@@ -12,7 +12,7 @@
   <header class="header">
     <img src="/favicon.png" alt="Lurk logo" class="logo" />
     <h1>Lurk</h1>
-    <p class="tagline">Posts that vanish each hour — nothing lasts forever.</p>
+    <p class="tagline">Posts that vanish every 24 hours — nothing lasts forever.</p>
   </header>
 
   <!-- ====== New Thread Section ====== -->
@@ -26,19 +26,40 @@
         <label for="body">Body</label>
         <textarea id="body" name="body" placeholder="Add some context (optional)"></textarea>
 
-        <label for="image">Image</label>
-        <input type="file" id="image" name="image" accept="image/*" />
+        <label for="image">Media</label>
+        <input
+          type="file"
+          id="image"
+          name="image"
+          accept="image/*,video/mp4,video/webm,audio/mpeg,audio/mp3,audio/wav,audio/webm,audio/ogg"
+        />
         <div class="nsfw-row">
-          <button type="button" id="nsfw-toggle" class="nsfw-toggle" aria-pressed="false" title="Mark as NSFW (blur image)">NSFW</button>
+          <button type="button" id="nsfw-toggle" class="nsfw-toggle" aria-pressed="false" title="Mark as NSFW (blur media)">NSFW</button>
           <input type="hidden" id="sensitive" name="sensitive" value="" />
         </div>
 
-        <div id="image-preview" class="image-preview" aria-live="polite">
-          <img id="image-preview-img" alt="Image preview" class="thread-image" style="display:none" />
+        <div id="media-preview" class="image-preview media-preview" aria-live="polite">
+          <img id="media-preview-img" alt="Media preview" class="thread-image thread-media" style="display:none" />
+          <video
+            id="media-preview-video"
+            class="thread-video thread-media"
+            style="display:none"
+            playsinline
+            controls
+            preload="metadata"
+            muted
+          ></video>
+          <audio
+            id="media-preview-audio"
+            class="thread-audio thread-media"
+            style="display:none"
+            controls
+            preload="metadata"
+          ></audio>
         </div>
 
         <button type="submit">Post Thread</button>
-        <small>Max 5 MB • jpg/png/webp/gif</small>
+        <small>Images up to 5 MB — video/audio up to 100 MB (jpg/png/webp/gif/mp4/webm/mp3/wav)</small>
       </form>
     </div>
   </section>

@@ -102,10 +102,12 @@ async function init() {
   const bottomNav = document.querySelector('.bottom-nav');
   const navEllipsis = document.querySelector('.bottom-nav .nav-ellipsis');
   const threadSubmitBtn = document.getElementById('thread-submit') || document.querySelector('#thread-form button[type="submit"], #thread-form button');
-  const imageInput = document.getElementById('image');
+  const mediaInput = document.getElementById('image');
   const nsfwToggle = document.getElementById('nsfw-toggle');
   const sensitiveHidden = document.getElementById('sensitive');
-  const previewImg = document.getElementById('image-preview-img');
+  const previewImg = document.getElementById('media-preview-img') || document.getElementById('image-preview-img');
+  const previewVideo = document.getElementById('media-preview-video');
+  const previewAudio = document.getElementById('media-preview-audio');
   const heroCard = document.querySelector('.hero-card');
   const heroSection = document.querySelector('.hero-form-section');
   const heroCollapseBtn = document.getElementById('hero-collapse');
@@ -303,7 +305,7 @@ async function init() {
   const loadMoreBtn = document.getElementById("load-more");
   const titleInput = document.getElementById("title");
   const bodyInput = document.getElementById("body");
-  const EXPIRY_MS = 60 * 60 * 1000; // 1 hour
+  const EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   // ---- Draft persistence (localStorage) ----
   const DRAFT_KEY = "lurk:threadDraft";
@@ -395,28 +397,75 @@ async function init() {
 
     // ---- NSFW toggle logic ----
     const getNSFW = () => nsfwToggle?.getAttribute('aria-pressed') === 'true';
+    const applyPreviewBlur = () => {
+      const shouldBlur = !!getNSFW();
+      [previewImg, previewVideo].forEach((el) => {
+        if (!el) return;
+        const visible = el.style?.display !== 'none';
+        el.classList.toggle('blurred', shouldBlur && visible);
+      });
+    };
     const setNSFW = (on) => {
       if (nsfwToggle) nsfwToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
       if (sensitiveHidden) sensitiveHidden.value = on ? 'on' : '';
-      if (previewImg) previewImg.classList.toggle('blurred', !!on);
+      applyPreviewBlur();
     };
     nsfwToggle?.addEventListener('click', () => setNSFW(!getNSFW()));
 
-    // ---- Image preview ----
-    imageInput?.addEventListener('change', () => {
+    let previewObjectUrl = null;
+    const clearMediaPreview = () => {
       try {
-        const file = imageInput.files?.[0];
-        if (!file) {
-          if (previewImg) { previewImg.src = ''; previewImg.style.display = 'none'; }
-          return;
+        if (previewObjectUrl) {
+          URL.revokeObjectURL(previewObjectUrl);
+          previewObjectUrl = null;
         }
+      } catch { previewObjectUrl = null; }
+      if (previewImg) {
+        previewImg.src = '';
+        previewImg.style.display = 'none';
+        previewImg.classList.remove('blurred');
+      }
+      if (previewVideo) {
+        try { previewVideo.pause(); } catch {}
+        previewVideo.removeAttribute('src');
+        try { previewVideo.load(); } catch {}
+        previewVideo.style.display = 'none';
+        previewVideo.classList.remove('blurred');
+      }
+      if (previewAudio) {
+        try { previewAudio.pause(); } catch {}
+        previewAudio.removeAttribute('src');
+        try { previewAudio.load(); } catch {}
+        previewAudio.style.display = 'none';
+      }
+    };
+
+    // ---- Media preview (image/video/audio) ----
+    mediaInput?.addEventListener('change', () => {
+      try {
+        clearMediaPreview();
+        const file = mediaInput.files?.[0];
+        if (!file) return;
         const url = URL.createObjectURL(file);
-        if (previewImg) {
+        previewObjectUrl = url;
+        const mime = String(file.type || '').toLowerCase();
+        if (mime.startsWith('video/')) {
+          if (previewVideo) {
+            previewVideo.src = url;
+            previewVideo.style.display = 'block';
+            try { previewVideo.load(); } catch {}
+          }
+        } else if (mime.startsWith('audio/')) {
+          if (previewAudio) {
+            previewAudio.src = url;
+            previewAudio.style.display = 'block';
+            try { previewAudio.load(); } catch {}
+          }
+        } else if (previewImg) {
           previewImg.src = url;
           previewImg.style.display = 'block';
-          previewImg.onload = () => { try { URL.revokeObjectURL(url); } catch {} };
-          previewImg.classList.toggle('blurred', getNSFW());
         }
+        applyPreviewBlur();
       } catch {}
     });
 
@@ -445,13 +494,24 @@ async function init() {
       try {
         setPosting(true);
         const res = await fetch("/threads", { method: "POST", body: formData });
-        if (!res.ok) throw new Error(`POST /threads ${res.status}`);
-        const data = await res.json();
+        let payload = null;
+        try {
+          payload = await res.json();
+        } catch {
+          payload = null;
+        }
+        if (!res.ok) {
+          const error = new Error(`POST /threads ${res.status}`);
+          error.responsePayload = payload;
+          error.responseStatus = res.status;
+          throw error;
+        }
+        const data = payload;
         if (!data || typeof data.id === 'undefined') throw new Error('Bad response');
         if (!document.querySelector(`[data-id="${data.id}"]`)) addThreadToDOM(data);
         threadForm.reset();
         setNSFW(false);
-        if (previewImg) { previewImg.src = ''; previewImg.style.display = 'none'; }
+        clearMediaPreview();
         try { localStorage.removeItem(DRAFT_KEY); } catch {}
         setSuccess();
         playChime();
@@ -465,6 +525,15 @@ async function init() {
         } catch {}
       } catch (err) {
         console.error("Error submitting thread:", err);
+        try {
+          const code = err?.responsePayload?.error;
+          let msg = null;
+          if (code === 'media_too_large') msg = 'Video/audio uploads are limited to 100 MB.';
+          else if (code === 'image_too_large') msg = 'Images are limited to 5 MB.';
+          else if (code === 'invalid_file_type') msg = 'Unsupported file type. Try mp4, webm, mp3, wav, jpg, png, or webp.';
+          else if (err?.responseStatus === 413) msg = 'Upload too large. Keep files at or below 100 MB.';
+          if (msg) alert(msg);
+        } catch {}
         if (submitBtn) {
           submitBtn.disabled = false;
           submitBtn.classList.remove('is-posting');
@@ -643,6 +712,71 @@ async function init() {
 
   // ---- Most Viewed (top 4) ----
   const mostViewedWrap = document.getElementById('most-viewed');
+  const MEDIA_EXTENSION_HINTS = {
+    video: ['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.ogg'],
+    audio: ['.mp3', '.wav', '.ogg', '.oga', '.m4a', '.aac', '.flac', '.weba'],
+  };
+  function inferThreadMediaType(thread = {}) {
+    try {
+      const declared = String(thread.mediaType || '').toLowerCase();
+      if (declared === 'video' || declared === 'audio') return declared;
+      if (declared === 'image') return 'image';
+      const src = String(thread.image || '').toLowerCase();
+      if (!src) return null;
+      const match = src.match(/\.([a-z0-9]+)(?:[?#]|$)/);
+      if (!match) return 'image';
+      const ext = `.${match[1]}`;
+      if (MEDIA_EXTENSION_HINTS.video.includes(ext)) return 'video';
+      if (MEDIA_EXTENSION_HINTS.audio.includes(ext)) return 'audio';
+      return 'image';
+    } catch {
+      return thread?.image ? 'image' : null;
+    }
+  }
+  function buildThreadMediaElement(thread = {}) {
+    if (!thread?.image) return null;
+    const type = inferThreadMediaType(thread) || 'image';
+    let el = null;
+    if (type === 'video') {
+      el = document.createElement('video');
+      el.controls = true;
+      el.preload = 'metadata';
+      el.playsInline = true;
+      el.className = 'thread-media thread-video';
+      try { el.controlsList = 'nodownload noplaybackrate'; } catch {}
+    } else if (type === 'audio') {
+      el = document.createElement('audio');
+      el.controls = true;
+      el.preload = 'metadata';
+      el.className = 'thread-media thread-audio';
+    } else {
+      el = document.createElement('img');
+      el.alt = 'thread media';
+      el.className = 'thread-image thread-media';
+    }
+    el.src = thread.image;
+    return { element: el, type };
+  }
+  function buildMostViewedThumb(thread = {}) {
+    if (!thread?.image) return null;
+    const type = inferThreadMediaType(thread) || 'image';
+    if (type === 'image') {
+      const img = document.createElement('img');
+      img.className = 'mv-thumb';
+      img.src = thread.image;
+      img.alt = 'thread media';
+      return img;
+    }
+    const placeholder = document.createElement('div');
+    placeholder.className = `mv-thumb mv-thumb-placeholder ${type === 'video' ? 'is-video' : 'is-audio'}`;
+    const icon = document.createElement('span');
+    icon.className = 'mv-icon';
+    icon.textContent = type === 'video' ? '🎬' : '🎧';
+    const label = document.createElement('span');
+    label.textContent = type === 'video' ? 'Video attachment' : 'Audio attachment';
+    placeholder.append(icon, label);
+    return placeholder;
+  }
   async function loadMostViewed() {
     if (!mostViewedWrap) return;
     try {
@@ -655,16 +789,15 @@ async function init() {
         card.href = '#threads';
         card.className = 'mv-card';
         card.setAttribute('data-id', String(t.id));
-        const img = document.createElement('img');
-        img.className = 'mv-thumb';
-        if (t.image) { img.src = t.image; img.alt = 'thread image'; } else { img.style.display = 'none'; }
+        const thumb = buildMostViewedThumb(t);
         const title = document.createElement('div');
         title.className = 'mv-title';
         title.textContent = t.title || '(untitled)';
         const meta = document.createElement('div');
         meta.className = 'mv-meta';
         meta.textContent = `${(t.views || 0)} views`;
-        card.append(img, title, meta);
+        if (thumb) card.appendChild(thumb);
+        card.append(title, meta);
         card.addEventListener('click', (e) => {
           try {
             // Scroll to the thread if present, else let it link to feed
@@ -748,7 +881,8 @@ async function init() {
       if (t.closest('.reply-form')) return false;
       if (t.closest('.reply-toggle')) return false;
       if (t.closest('.sensitive-mask')) return false;
-      if (t.closest('.thread-image-wrap')) return false; // includes image
+      if (t.closest('.thread-image-wrap') || t.closest('.thread-media-wrap')) return false;
+      if (t.closest('.thread-media')) return false;
       if (t.closest('button, input, textarea, select, a, label')) return false;
       return true;
     };
@@ -762,40 +896,36 @@ async function init() {
     const body = document.createElement("p");
     body.textContent = thread.body || "";
 
-    // Optional image
-    if (thread.image) {
-      const imgEl = document.createElement("img");
-      // `thread.image` is already a full path like "/uploads/<file>"
-      imgEl.src = thread.image;
-      imgEl.alt = "thread image";
-      imgEl.classList.add("thread-image");
-
+    // Optional media attachment
+    const mediaInfo = buildThreadMediaElement(thread);
+    if (mediaInfo) {
+      const { element: mediaEl, type: mediaType } = mediaInfo;
       if (thread.sensitive) {
         const wrap = document.createElement('div');
-        wrap.className = 'thread-image-wrap sensitive';
-        imgEl.classList.add('blurred');
+        wrap.className = 'thread-image-wrap thread-media-wrap sensitive';
+        mediaEl.classList.add('blurred');
 
         const mask = document.createElement('button');
         mask.type = 'button';
         mask.className = 'sensitive-mask';
         mask.setAttribute('aria-pressed', 'false');
-        mask.title = 'Sensitive image — click to reveal';
+        mask.title = 'Sensitive media — click to reveal';
         mask.textContent = 'Sensitive — Click to reveal';
 
         mask.addEventListener('click', () => {
           const nowReveal = !wrap.classList.contains('revealed');
           wrap.classList.toggle('revealed', nowReveal);
-          imgEl.classList.toggle('blurred', !nowReveal);
+          mediaEl.classList.toggle('blurred', !nowReveal);
           mask.setAttribute('aria-pressed', String(nowReveal));
           mask.textContent = nowReveal ? 'Hide again' : 'Sensitive — Click to reveal';
         });
 
-        attachInlineZoom(imgEl);
-        wrap.append(imgEl, mask);
+        if (mediaType === 'image') attachInlineZoom(mediaEl);
+        wrap.append(mediaEl, mask);
         threadDiv.append(wrap);
       } else {
-        attachInlineZoom(imgEl);
-        threadDiv.append(imgEl);
+        if (mediaType === 'image') attachInlineZoom(mediaEl);
+        threadDiv.append(mediaEl);
       }
     }
 

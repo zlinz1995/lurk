@@ -53,12 +53,46 @@ try {
     } catch {}
     expressApp.use("/uploads", express.static(uploadsDir, { fallthrough: true }));
 
-    // --- IN-MEMORY STORE (ephemeral, 1 hour TTL) ---
-    const THREAD_TTL_MS = 60 * 60 * 1000; // 1 hour
+    // --- IN-MEMORY STORE (ephemeral, 24 hour TTL) ---
+    const THREAD_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
     let nextThreadId = 1;
     let nextReplyId = 1;
-    /** @type {Array<{id:number,title:string,body?:string,image?:string,sensitive?:boolean,timestamp:string,expiry:number,views?:number,reactions?:Record<string,number>,replies?:Array<{id:number,text:string,timestamp:string}>}>} */
+    /** @type {Array<{id:number,title:string,body?:string,image?:string,mediaType?:'image'|'video'|'audio',mediaMime?:string,sensitive?:boolean,timestamp:string,expiry:number,views?:number,reactions?:Record<string,number>,replies?:Array<{id:number,text:string,timestamp:string}>}>} */
     let threads = [];
+
+    const MEDIA_MIME_TYPES = {
+      image: ["image/jpeg", "image/png", "image/webp", "image/gif"],
+      video: ["video/mp4", "video/webm", "video/quicktime", "video/ogg"],
+      audio: [
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/wave",
+        "audio/webm",
+        "audio/ogg",
+        "audio/aac",
+        "audio/x-m4a",
+        "audio/m4a",
+      ],
+    };
+    const MIME_TO_MEDIA_TYPE = new Map();
+    for (const [kind, list] of Object.entries(MEDIA_MIME_TYPES)) {
+      for (const mime of list) {
+        MIME_TO_MEDIA_TYPE.set(mime, kind);
+      }
+    }
+    const detectMediaType = (rawMime = "") => {
+      try {
+        const mime = String(rawMime || "").toLowerCase();
+        if (!mime) return undefined;
+        if (MIME_TO_MEDIA_TYPE.has(mime)) return MIME_TO_MEDIA_TYPE.get(mime);
+        if (mime.startsWith("image/")) return "image";
+        if (mime.startsWith("video/")) return "video";
+        if (mime.startsWith("audio/")) return "audio";
+      } catch {}
+      return undefined;
+    };
 
     // --- Multer for image uploads ---
     const storage = multer.diskStorage({
@@ -69,14 +103,18 @@ try {
         cb(null, name);
       },
     });
+    const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+    const MEDIA_MAX_BYTES = 100 * 1024 * 1024;
+
     const upload = multer({
       storage,
-      limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+      limits: { fileSize: MEDIA_MAX_BYTES },
       fileFilter: (_req, file, cb) => {
         try {
-          const ok = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(
-            String(file.mimetype || "").toLowerCase()
-          );
+          const mime = String(file.mimetype || "").toLowerCase();
+          const mediaType = detectMediaType(mime);
+          if (mediaType) file.detectedMediaType = mediaType;
+          const ok = !!mediaType;
           cb(ok ? null : new Error("INVALID_FILE"), ok);
         } catch {
           cb(null, true);
@@ -219,6 +257,8 @@ try {
             title: t.title,
             body: t.body || "",
             image: t.image,
+            mediaType: t.mediaType || (t.image ? "image" : undefined),
+            mediaMime: t.mediaMime,
             sensitive: !!t.sensitive,
             timestamp: t.timestamp,
             expiry: t.expiry,
@@ -235,6 +275,15 @@ try {
     expressApp.get("/threads", listThreads);
     expressApp.get("/api/threads", listThreads);
 
+    const cleanupUpload = (file) => {
+      try {
+        if (!file) return;
+        const filePath = file.path || (file.filename ? path.join(uploadsDir, file.filename) : null);
+        if (!filePath) return;
+        fs.unlink(filePath, () => {});
+      } catch {}
+    };
+
     // Create thread (multipart form)
     const createThread = (req, res) => {
       try {
@@ -245,7 +294,24 @@ try {
 
         const file = req.file;
         let imagePath = undefined;
-        if (file && file.filename) imagePath = "/uploads/" + file.filename;
+        let mediaType = undefined;
+        let mediaMime = undefined;
+        if (file && file.filename) {
+          imagePath = "/uploads/" + file.filename;
+          mediaMime = file.mimetype ? String(file.mimetype).toLowerCase() : undefined;
+          mediaType = file.detectedMediaType || detectMediaType(mediaMime);
+          const fileSize = Number(file.size || 0);
+          const typeForLimit = mediaType || "image";
+          const limitBytes = typeForLimit === "image" ? IMAGE_MAX_BYTES : MEDIA_MAX_BYTES;
+          if (fileSize > limitBytes) {
+            cleanupUpload(file);
+            const errorCode = typeForLimit === "image" ? "image_too_large" : "media_too_large";
+            return res.status(400).json({
+              error: errorCode,
+              limitBytes,
+            });
+          }
+        }
         const nowISO = new Date().toISOString();
         const expiry = Date.now() + THREAD_TTL_MS;
         const thread = {
@@ -253,6 +319,8 @@ try {
           title,
           body,
           image: imagePath,
+          mediaType,
+          mediaMime,
           sensitive,
           timestamp: nowISO,
           expiry,
@@ -329,7 +397,7 @@ try {
     expressApp.post("/threads/:id/view", recordView);
     expressApp.post("/api/threads/:id/view", recordView);
 
-    // Most viewed (from currently alive threads = past hour)
+    // Most viewed (from currently alive threads = past 24 hours)
     const mostViewed = (req, res) => {
       try {
         purgeExpired();
@@ -342,6 +410,8 @@ try {
             id: t.id,
             title: t.title,
             image: t.image,
+            mediaType: t.mediaType || (t.image ? "image" : undefined),
+            mediaMime: t.mediaMime,
             sensitive: !!t.sensitive,
             timestamp: t.timestamp,
             expiry: t.expiry,
@@ -364,6 +434,19 @@ try {
       } catch {
         res.json({ ok: true });
       }
+    });
+
+    // Upload / multer error handler
+    expressApp.use((err, _req, res, next) => {
+      if (!err) return next();
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({ error: "media_too_large", limitBytes: MEDIA_MAX_BYTES });
+      }
+      if (err.message === "INVALID_FILE") {
+        return res.status(400).json({ error: "invalid_file_type" });
+      }
+      console.error("Upload middleware error:", err);
+      return res.status(500).json({ error: "server_error" });
     });
 
     // --- NEXT.JS HANDLER (REGEX FIX FOR EXPRESS v5) ---

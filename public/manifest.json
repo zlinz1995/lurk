@@ -1,7 +1,7 @@
 {
   "name": "Lurk",
   "short_name": "Lurk",
-  "description": "Anonymous, ephemeral image board with real-time chat — posts vanish every hour.",
+  "description": "Anonymous, ephemeral image board with real-time chat — posts vanish every 24 hours.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0f1a",
