@@ -1,7 +1,7 @@
 import ReportClient from "./ReportClient";
 
 export const metadata = {
-  title: "Report – Lurk",
+  title: "Report - Lurk",
 };
 
 export default function ReportPage() {

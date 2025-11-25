@@ -6,66 +6,74 @@ import ChatPanel from "./ChatPanel";
 export default function ChatWidget() {
   const [open, setOpen] = useState(false);
 
-  const handleClose = useCallback(() => {
-    setOpen(false);
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("lurk-livechat-close"));
-    }
+  const togglePanel = useCallback(() => {
+    setOpen((prev) => {
+      const next = !prev;
+      if (!next && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("lurk-livechat-close"));
+      }
+      return next;
+    });
   }, []);
 
-  const handleTitleKey = useCallback(
-    (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        handleClose();
-      }
-    },
-    [handleClose]
-  );
+  const handleOpen = useCallback(() => {
+    setOpen(true);
+  }, []);
+
+  const bubbleClass = `chat-bubble${open ? "" : " chat-bubble-visible"}`;
 
   return (
     <>
-      <div
-        className="chat-collapsed-card"
-        onClick={() => setOpen(true)}
-        style={{ display: open ? "none" : "block" }}
+      <button
+        type="button"
+        className={bubbleClass}
         aria-hidden={open}
+        aria-label="Open live chat"
+        onClick={handleOpen}
+        style={{ display: open ? "none" : "flex" }}
       >
-        Live Chat
-      </div>
+        💬
+      </button>
 
-      <div
+      <aside
         className="chat-panel-container glass-panel"
         style={{ display: open ? "flex" : "none" }}
         aria-hidden={!open}
+        aria-label="Live chat"
+        role="complementary"
       >
         <div className="chat-header">
           <button
-            className="chat-title-button"
             type="button"
-            onClick={handleClose}
-            onKeyDown={handleTitleKey}
+            className="chat-header-toggle"
+            onClick={togglePanel}
+            aria-expanded={open}
+            aria-controls="chat-widget-body"
           >
             Live Chat
           </button>
 
-          <details className="chat-participants-control" open>
-            <summary>
-              <span className="chat-participants-label">Current users</span>
-              <span id="chat-video-participant-count" className="chat-video-count">
-                0
-              </span>
-            </summary>
+          <div className="chat-current-users">
+            <span className="chat-current-users-label">Current Users:</span>
+            <span id="chat-video-participant-count" className="chat-current-count">
+              0
+            </span>
+          </div>
+        </div>
 
-            <ul
-              id="chat-video-participant-list"
-              className="chat-video-participant-list"
-            ></ul>
-          </details>
+        <div
+          id="chat-widget-body"
+          className="chat-participant-list-container"
+          aria-live="polite"
+        >
+          <ul
+            id="chat-video-participant-list"
+            className="chat-video-participant-list chat-current-user-list"
+          ></ul>
         </div>
 
         <ChatPanel />
-      </div>
+      </aside>
     </>
   );
 }

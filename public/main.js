@@ -2,6 +2,16 @@
   if (window.__lurkLiveInitialized) return;
   window.__lurkLiveInitialized = true;
 
+  const API_BASE = getApiBase();
+  const socketOptions = { path: "/socket.io", transports: ["websocket", "polling"] };
+  const apiPath = (path = "") => {
+    if (!path) return API_BASE;
+    if (/^https?:\/\//i.test(path)) return path;
+    const normalized = path.startsWith("/") ? path : `/${path}`;
+    if (!API_BASE) return normalized;
+    return `${API_BASE}${normalized}`;
+  };
+
   const ICE_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
@@ -16,7 +26,7 @@
           console.warn("Socket.io client unavailable");
           return;
         }
-        const socket = ioLib();
+        const socket = ioLib(API_BASE || undefined, socketOptions);
         wireDisplayNameSync(defaultName);
         setupTextChat(socket, defaultName);
         setupVideoChat(socket, defaultName);
@@ -41,7 +51,7 @@
       let script = document.querySelector("script[data-socket-client]");
       if (!script) {
         script = document.createElement("script");
-        script.src = "/socket.io/socket.io.js";
+        script.src = apiPath("/socket.io/socket.io.js");
         script.async = true;
         script.dataset.socketClient = "true";
         document.head.appendChild(script);
@@ -582,6 +592,19 @@
       }
       updateRemotePlaceholder();
       removeParticipantEntry(peerId);
+    }
+  }
+
+  function getApiBase() {
+    try {
+      const source =
+        window.__LURK_API_BASE ||
+        document.documentElement?.dataset?.apiBase ||
+        document.body?.dataset?.apiBase ||
+        "";
+      return source ? source.replace(/\/$/, "") : "";
+    } catch {
+      return "";
     }
   }
 

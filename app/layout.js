@@ -11,27 +11,29 @@ export const metadata = {
 // ----------------------------------------
 import ChatWidget from "./components/chat/ChatWidget";
 import NavMenu from "./components/NavMenu";
+import MainScriptLoader from "./components/MainScriptLoader";
 import "../public/styles.css";
+
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
 
 // ----------------------------------------
 // Root Layout — MUST be a Server Component
 // ----------------------------------------
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" data-api-base={API_BASE}>
       <head>
         <link rel="icon" href="/favicon.png" />
       </head>
 
-      <body>
+      <body data-api-base={API_BASE}>
         <NavMenu />
+        <MainScriptLoader />
         {/* Page Content */}
         {children}
 
         {/* Floating Chat Widget */}
         <ChatWidget />
-
-        {/* Load main.js (WebSocket, threads, chimes, etc.) ONLY ONCE */}
       </body>
     </html>
   );
