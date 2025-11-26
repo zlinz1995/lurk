@@ -1,8 +1,9 @@
 import fs from "fs";
 import path from "path";
 import http from "http";
-import { pathToFileURL } from "url";
 import express from "express";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
 import multer from "multer";
 import mime from "mime-types";
 import Database from "better-sqlite3";
@@ -15,6 +16,31 @@ const MAX_MEDIA_BYTES = Number(process.env.MAX_MEDIA_BYTES || 15 * 1024 * 1024);
 const DB_PATH = path.join(process.cwd(), ".data", process.env.DB_NAME || "lurk.db");
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 const ALLOWED_MEDIA_PREFIXES = ["image/", "video/", "audio/"];
+const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000);
+const RATE_LIMIT_STANDARD_HEADERS = true;
+const RATE_LIMIT_LEGACY_HEADERS = false;
+const REACT_MEMORY_TTL = Number(process.env.REACT_TTL_MS || 24 * 60 * 60 * 1000);
+const reactMemory = new Map(); // key: `${threadId}:${ip}`, value: timestamp
+
+const createLimiter = ({
+  windowMs = RATE_LIMIT_WINDOW,
+  limit = 60,
+  message = { error: "too_many_requests" },
+  keyGenerator,
+} = {}) =>
+  rateLimit({
+    windowMs,
+    limit,
+    standardHeaders: RATE_LIMIT_STANDARD_HEADERS,
+    legacyHeaders: RATE_LIMIT_LEGACY_HEADERS,
+    message,
+    keyGenerator,
+  });
+
+const readLimiter = createLimiter({ limit: 240 });
+const writeLimiter = createLimiter({ windowMs: 5 * 60 * 1000, limit: 30 });
+const reactLimiter = createLimiter({ windowMs: 60 * 1000, limit: 90 });
+const reportLimiter = createLimiter({ windowMs: 10 * 60 * 1000, limit: 5 });
 
 export function attachApiLayer({ app, server, dev = false } = {}) {
   if (!app || !server) {
@@ -22,6 +48,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
   }
 
   ensureDirectories();
+  resetDatabase();
   const db = new Database(DB_PATH);
   prepareSchema(db);
   purgeExpiredThreads(db);
@@ -30,7 +57,15 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
   app.set("trust proxy", true);
   app.use(
     helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
       crossOriginResourcePolicy: { policy: "cross-origin" },
+    })
+  );
+  app.use(
+    cors({
+      origin: "*",
+      methods: ["GET", "POST", "OPTIONS"],
     })
   );
   app.use(express.json({ limit: "2mb" }));
@@ -51,7 +86,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
-  app.get("/threads", (_req, res) => {
+  app.get("/threads", readLimiter, (_req, res) => {
     purgeExpiredThreads(db);
     const rows = db
       .prepare(
@@ -67,7 +102,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     res.json(rows.map((row) => serializeThread(row, db)));
   });
 
-  app.get("/threads/most-viewed", (req, res) => {
+  app.get("/threads/most-viewed", readLimiter, (req, res) => {
     purgeExpiredThreads(db);
     const limit = clampInt(req.query?.limit, 1, 24) || 4;
     const rows = db
@@ -84,7 +119,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     res.json(rows.map((row) => serializeThread(row, db)));
   });
 
-  app.post("/threads", withUpload, (req, res) => {
+  app.post("/threads", writeLimiter, withUpload, (req, res) => {
     const text = sanitizeText(req.body?.title || req.body?.body || req.body?.text || "");
     if (!text) {
       cleanupMedia(req.file?.filename);
@@ -140,7 +175,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     }
   });
 
-  app.post("/threads/:id/replies", (req, res) => {
+  app.post("/threads/:id/replies", writeLimiter, (req, res) => {
     const threadId = Number(req.params.id);
     if (!Number.isInteger(threadId)) {
       return res.status(400).json({ error: "invalid_thread" });
@@ -180,7 +215,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     }
   });
 
-  app.post("/threads/:id/react", (req, res) => {
+  app.post("/threads/:id/react", reactLimiter, (req, res) => {
     const threadId = Number(req.params.id);
     if (!Number.isInteger(threadId)) {
       return res.status(400).json({ error: "invalid_thread" });
@@ -189,6 +224,14 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     const emoji = sanitizeEmoji(req.body?.emoji || "");
     if (!emoji) {
       return res.status(400).json({ error: "emoji_required" });
+    }
+
+    const clientIp = req.ip || req.connection?.remoteAddress || "unknown";
+    const reactKey = `${threadId}:${clientIp}`;
+    const nowMs = Date.now();
+    pruneReactionMemory(nowMs);
+    if (reactMemory.has(reactKey)) {
+      return res.status(429).json({ error: "already_reacted" });
     }
 
     const thread = db
@@ -206,6 +249,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
         JSON.stringify(reactions),
         threadId
       );
+      reactMemory.set(reactKey, nowMs);
       res.json({ reactions });
     } catch (error) {
       console.error("Failed to record reaction", error);
@@ -213,7 +257,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     }
   });
 
-  app.post("/threads/:id/view", (req, res) => {
+  app.post("/threads/:id/view", reactLimiter, (req, res) => {
     const threadId = Number(req.params.id);
     if (!Number.isInteger(threadId)) {
       return res.status(400).json({ error: "invalid_thread" });
@@ -232,7 +276,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ views: Number(updated?.views || 0) });
   });
 
-  app.post("/reports", (req, res) => {
+  app.post("/reports", reportLimiter, (req, res) => {
     const payload = {
       category: sanitizeText(req.body?.category || "", 64),
       impact: sanitizeText(req.body?.impact || "", 64),
@@ -345,6 +389,19 @@ function ensureDirectories() {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
+function resetDatabase() {
+  const targets = [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`];
+  targets.forEach((target) => {
+    try {
+      if (fs.existsSync(target)) {
+        fs.unlinkSync(target);
+      }
+    } catch (error) {
+      console.warn("Could not clear database file", target, error?.code || error?.message || error);
+    }
+  });
+}
+
 function prepareSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS threads (
@@ -375,9 +432,7 @@ function prepareSchema(db) {
     { name: "expires_at", type: "DATETIME" },
   ]);
 
-  ensureColumns(db, "posts", [
-    // no-op placeholder for future migrations
-  ]);
+  ensureColumns(db, "posts", []);
 
   db.prepare(
     "UPDATE threads SET views = 0 WHERE views IS NULL OR views = ''"
@@ -596,21 +651,21 @@ function setupSockets(server) {
   return io;
 }
 
-const invokedFromCli = process.argv[1]
-  ? pathToFileURL(process.argv[1]).href
-  : null;
+function pruneReactionMemory(nowMs = Date.now()) {
+  const cutoff = nowMs - REACT_MEMORY_TTL;
+  reactMemory.forEach((ts, key) => {
+    if (ts < cutoff) {
+      reactMemory.delete(key);
+    }
+  });
+}
 
-if (invokedFromCli && import.meta.url === invokedFromCli) {
+export function createApiServer({ port = 4000, dev = false } = {}) {
   const expressApp = express();
   const httpServer = http.createServer(expressApp);
-  const dev = process.env.NODE_ENV !== "production";
-
   attachApiLayer({ app: expressApp, server: httpServer, dev });
-
-  // Default to 4000 here so it doesn't collide with the Next.js server (8080)
-  // when someone runs `npm run api` separately.
-  const PORT = process.env.API_PORT || process.env.PORT || 4000;
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Lurk API listening on port ${PORT}`);
+  httpServer.listen(port, "0.0.0.0", () => {
+    console.log(`Lurk API listening on port ${port}`);
   });
+  return { app: expressApp, server: httpServer };
 }

@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+const DEFAULT_API_BASE = "http://localhost:4000";
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_BASE
+).replace(/\/$/, "");
 
 const withApiBase = (path = "") => {
   if (!path) return API_BASE || "";
@@ -22,7 +25,8 @@ const absoluteFromApi = (value) => {
 const THREADS_ENDPOINT = withApiBase("/threads");
 const MOST_VIEWED_ENDPOINT = withApiBase("/threads/most-viewed");
 const MAX_TEXT_LENGTH = 500;
-const REACTION_EMOJIS = ["👍","👎","🔥","😂","😍","😢"];
+const REACTION_EMOJIS = ["👍","👎","🔥","😂","😍","😯"];
+const REACTED_KEY = "lurk_reacted_threads";
 
 const threadRepliesEndpoint = (id) => withApiBase(`/threads/${id}/replies`);
 const threadReactEndpoint = (id) => withApiBase(`/threads/${id}/react`);
@@ -65,6 +69,24 @@ export default function HomePage() {
   const [reacting, setReacting] = useState({});
   const [collapsedThreads, setCollapsedThreads] = useState({});
   const mediaInputRef = useRef(null);
+  const [reactedThreads, setReactedThreads] = useState(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem(REACTED_KEY);
+      if (!stored) return new Set();
+      return new Set(JSON.parse(stored));
+    } catch {
+      return new Set();
+    }
+  });
+
+  const persistReacted = useCallback((nextSet) => {
+    try {
+      localStorage.setItem(REACTED_KEY, JSON.stringify(Array.from(nextSet)));
+    } catch {
+      // ignore persistence failures
+    }
+  }, []);
 
   const loadThreads = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -192,6 +214,7 @@ export default function HomePage() {
   const handleReact = useCallback(
     async (threadId, emoji) => {
       if (!threadId || !emoji) return;
+      if (reactedThreads.has(threadId)) return;
       if (reacting[threadId]) return;
       setMapValue(setReacting, threadId, emoji);
       try {
@@ -200,6 +223,15 @@ export default function HomePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ emoji }),
         });
+        if (res.status === 429) {
+          setReactedThreads((prev) => {
+            const next = new Set(prev);
+            next.add(threadId);
+            persistReacted(next);
+            return next;
+          });
+          throw new Error("You already reacted.");
+        }
         if (!res.ok) {
           throw new Error("Unable to react right now.");
         }
@@ -211,13 +243,19 @@ export default function HomePage() {
               : thread
           )
         );
+        setReactedThreads((prev) => {
+          const next = new Set(prev);
+          next.add(threadId);
+          persistReacted(next);
+          return next;
+        });
       } catch (error) {
         console.error("Failed to react to thread", error);
       } finally {
         setMapValue(setReacting, threadId, undefined);
       }
     },
-    [reacting]
+    [reacting, reactedThreads, persistReacted]
   );
 
   const handleSubmit = useCallback(
@@ -381,6 +419,7 @@ export default function HomePage() {
                   thread={thread}
                   enableActions={false}
                   reactionOptions={REACTION_EMOJIS}
+                  reactedThreads={reactedThreads}
                 />
               ))}
             </div>
@@ -401,16 +440,17 @@ export default function HomePage() {
           ) : threads.length ? (
             <div id="threads">
               {threads.map((thread) => (
-                <ThreadCard
-                  key={thread.id}
-                  thread={thread}
-                  enableActions
-                  reactionOptions={REACTION_EMOJIS}
-                  onReact={handleReact}
-                  reactingEmoji={reacting[thread.id]}
-                  onReplyChange={handleReplyChange}
-                  onReplySubmit={handleReplySubmit}
-                  replyValue={replyDrafts[thread.id] || ""}
+              <ThreadCard
+                key={thread.id}
+                thread={thread}
+                enableActions
+                reactionOptions={REACTION_EMOJIS}
+                reactedThreads={reactedThreads}
+                onReact={handleReact}
+                reactingEmoji={reacting[thread.id]}
+                onReplyChange={handleReplyChange}
+                onReplySubmit={handleReplySubmit}
+                replyValue={replyDrafts[thread.id] || ""}
                   replySubmitting={!!replySubmitting[thread.id]}
                   replyError={replyErrors[thread.id]}
                   replySuccess={replySuccess[thread.id]}
@@ -442,6 +482,7 @@ function ThreadCard({
   replySuccess = "",
   isCollapsed = false,
   onToggleCollapse,
+  reactedThreads = new Set(),
 }) {
   if (!thread) return null;
   const {
@@ -535,100 +576,104 @@ function ThreadCard({
             </div>
           ) : null}
 
-      {enableActions ? (
-        <div className="thread-actions">
-          {showReactionButtons ? (
-            <div
-              className="thread-reaction-list"
-              role="group"
-              aria-label="React to this thread"
-            >
-              {reactionOptions.map((emoji) => {
-                const count = Number(reactions?.[emoji] || 0);
-                const active = reactingEmoji === emoji;
-                const label = `React with ${emoji}${
-                  count ? ` (${count})` : ""
-                }`;
-                return (
+          {enableActions ? (
+            <div className="thread-actions">
+              <div className="thread-reply-section">
+                <h3>Replies ({replyCount})</h3>
+                {replyCount ? (
+                  <ul className="thread-reply-list">
+                    {replyList.map((reply, index) => (
+                      <li
+                        key={reply.id || reply.timestamp || `${id}-reply-${index}`}
+                        className="thread-reply"
+                      >
+                        <div className="thread-reply-meta">
+                          <span>Anonymous</span>
+                          {reply.timestamp ? (
+                            <time dateTime={reply.timestamp}>
+                              {formatTimestamp(reply.timestamp)}
+                            </time>
+                          ) : null}
+                        </div>
+                        {reply.text ? (
+                          <p className="thread-reply-text">{reply.text}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="thread-reply-empty">
+                    No replies yet. Start the conversation.
+                  </p>
+                )}
+
+                <form
+                  className="thread-reply-form"
+                  onSubmit={handleReplyFormSubmit}
+                >
+                  <label htmlFor={`reply-${id}`}>Add a reply</label>
+                  <textarea
+                    id={`reply-${id}`}
+                    placeholder="Share your thoughts..."
+                    maxLength={MAX_TEXT_LENGTH}
+                    value={replyValue}
+                    onChange={handleReplyInput}
+                    disabled={replySubmitting}
+                  />
+                  {replyError ? (
+                    <p className="form-status form-status-error" role="alert">
+                      {replyError}
+                    </p>
+                  ) : null}
+                  {replySuccess ? (
+                    <p className="form-status form-status-success" role="status">
+                      {replySuccess}
+                    </p>
+                  ) : null}
                   <button
-                    type="button"
-                    key={emoji}
-                    className={`thread-reaction-button${
-                      active ? " is-active" : ""
-                    }`}
-                    aria-label={label}
-                    onClick={() => onReact?.(id, emoji)}
-                    disabled={isReacting}
+                    type="submit"
+                    disabled={replySubmitting || !replyValue.trim()}
                   >
-                    <span className="thread-reaction-symbol">{emoji}</span>
-                    <span className="thread-reaction-count">
-                      {count > 0 ? count : ""}
-                    </span>
+                    {replySubmitting ? "Posting reply..." : "Reply"}
                   </button>
-                );
-              })}
+                </form>
+
+                {showReactionButtons ? (
+                  <div
+                    className="thread-reaction-list"
+                    role="group"
+                    aria-label="React to this thread"
+                  >
+                    {reactionOptions.map((emoji) => {
+                      const count = Number(reactions?.[emoji] || 0);
+                      const active = reactingEmoji === emoji;
+                      const hasReacted = reactedThreads?.has?.(id);
+                      const label = `React with ${emoji}${
+                        count ? ` (${count})` : ""
+                      }`;
+                      return (
+                        <button
+                          type="button"
+                          key={emoji}
+                          className={`thread-reaction-button${
+                            active ? " is-active" : ""
+                          }${hasReacted ? " is-disabled" : ""}`}
+                          aria-label={label}
+                          onClick={() => onReact?.(id, emoji)}
+                          disabled={isReacting || hasReacted}
+                        >
+                          <span className="thread-reaction-symbol">{emoji}</span>
+                          <span className="thread-reaction-count">
+                            {count > 0 ? count : ""}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : null}
-
-          <div className="thread-reply-section">
-            <h3>Replies ({replyCount})</h3>
-            {replyCount ? (
-              <ul className="thread-reply-list">
-                {replyList.map((reply, index) => (
-                  <li
-                    key={reply.id || reply.timestamp || `${id}-reply-${index}`}
-                    className="thread-reply"
-                  >
-                    <div className="thread-reply-meta">
-                      <span>Anonymous</span>
-                      {reply.timestamp ? (
-                        <time dateTime={reply.timestamp}>
-                          {formatTimestamp(reply.timestamp)}
-                        </time>
-                      ) : null}
-                    </div>
-                    {reply.text ? (
-                      <p className="thread-reply-text">{reply.text}</p>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="thread-reply-empty">
-                No replies yet. Start the conversation.
-              </p>
-            )}
-
-            <form className="thread-reply-form" onSubmit={handleReplyFormSubmit}>
-              <label htmlFor={`reply-${id}`}>Add a reply</label>
-              <textarea
-                id={`reply-${id}`}
-                placeholder="Share your thoughtsâ€¦"
-                maxLength={MAX_TEXT_LENGTH}
-                value={replyValue}
-                onChange={handleReplyInput}
-                disabled={replySubmitting}
-              />
-              {replyError ? (
-                <p className="form-status form-status-error" role="alert">
-                  {replyError}
-                </p>
-              ) : null}
-              {replySuccess ? (
-                <p className="form-status form-status-success" role="status">
-                  {replySuccess}
-                </p>
-              ) : null}
-              <button
-                type="submit"
-                disabled={replySubmitting || !replyValue.trim()}
-              >
-                {replySubmitting ? "Posting reply..." : "Reply"}
-              </button>
-            </form>
-          </div>
-        </div>
-      ) : null}
         </>
       ) : null}
     </article>

@@ -1,5 +1,5 @@
-// Lurk service worker — caches core assets for offline use
-const CACHE_NAME = 'lurk-v1';
+// Lurk service worker - caches core assets for offline use
+const CACHE_NAME = 'lurk-v2';
 const ASSETS = [
   '/',
   '/index.html',
@@ -10,7 +10,7 @@ const ASSETS = [
   '/socket.io/socket.io.js'
 ];
 
-// Install — cache all static assets
+// Install - cache all static assets
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
@@ -20,7 +20,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Activate — cleanup old caches
+// Activate - cleanup old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -30,12 +30,23 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch — serve cached assets when offline
+// Fetch - serve cached assets when offline
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+  const url = new URL(request.url);
+  const accept = request.headers.get('accept') || '';
+  const isSameOrigin = url.origin === self.location.origin;
+  const isSocket = url.pathname.startsWith('/socket.io/');
+  const isApi =
+    url.pathname.startsWith('/threads') ||
+    url.pathname.startsWith('/reports') ||
+    url.pathname.startsWith('/uploads') ||
+    url.pathname.startsWith('/health') ||
+    url.pathname.startsWith('/_next/data') ||
+    accept.includes('application/json');
 
-  // Don’t cache POST requests or Socket.IO
-  if (request.method !== 'GET' || request.url.includes('/socket.io/')) return;
+  // Skip API and cross-origin requests so thread/post data is always fresh
+  if (request.method !== 'GET' || !isSameOrigin || isSocket || isApi) return;
 
   event.respondWith(
     caches.match(request).then((cached) => {
