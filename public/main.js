@@ -62,8 +62,16 @@
         script.dataset.socketClient = "true";
         document.head.appendChild(script);
       }
+      const tryCdn = () => {
+        const cdnScript = document.createElement("script");
+        cdnScript.src = "https://cdn.socket.io/4.8.1/socket.io.min.js";
+        cdnScript.async = true;
+        cdnScript.addEventListener("load", () => resolve(window.io), { once: true });
+        cdnScript.addEventListener("error", reject, { once: true });
+        document.head.appendChild(cdnScript);
+      };
       script.addEventListener("load", () => resolve(window.io), { once: true });
-      script.addEventListener("error", reject, { once: true });
+      script.addEventListener("error", tryCdn, { once: true });
     });
   }
 

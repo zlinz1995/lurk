@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import http from "http";
 import express from "express";
+import { createRequire } from "module";
 import { loadEnv } from "./config/env.js";
 import { attachApiLayer } from "./lurkApi.js";
 
@@ -11,9 +12,20 @@ const PORT = process.env.PORT || process.env.API_PORT || 4000;
 const dev = process.env.NODE_ENV !== "production";
 const ROOT_DIR = process.cwd();
 const STATIC_DIR = path.join(ROOT_DIR, "out");
+const require = createRequire(import.meta.url);
 
 const app = express();
 const server = http.createServer(app);
+
+// Serve a guaranteed socket.io client build (safety net if the default handler is blocked)
+app.get("/socket.io/socket.io.js", (_req, res, next) => {
+  try {
+    const clientPath = require.resolve("socket.io-client/dist/socket.io.min.js");
+    res.sendFile(clientPath);
+  } catch (err) {
+    next(err);
+  }
+});
 
 if (fs.existsSync(STATIC_DIR)) {
   app.use(express.static(STATIC_DIR));
