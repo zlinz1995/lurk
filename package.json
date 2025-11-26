@@ -5,7 +5,7 @@
   "description": "Lurk — ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every 24 hours.",
   "scripts": {
     "dev": "next dev -p 8080",
-    "build": "cross-env NEXT_EXPORT=1 next build && next export",
+    "build": "next build",
     "start": "serve -l 8080 out",
     "lint": "next lint",
     "api": "node lurk-backend/src/server.js"

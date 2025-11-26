@@ -11,7 +11,12 @@ const dev = process.env.NODE_ENV !== "production";
 const app = express();
 const server = http.createServer(app);
 
-attachApiLayer({ app, server, dev });
+try {
+  attachApiLayer({ app, server, dev });
+  console.log("attachApiLayer completed successfully");
+} catch (err) {
+  console.error("attachApiLayer failed:", err);
+}
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Lurk API listening on port ${PORT}`);
