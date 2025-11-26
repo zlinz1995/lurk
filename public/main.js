@@ -24,6 +24,8 @@
       .then((ioLib) => {
         if (!ioLib) {
           console.warn("Socket.io client unavailable");
+          wireDisplayNameSync(defaultName);
+          setupVideoChat(null, defaultName);
           return;
         }
         const socket = ioLib(API_BASE || undefined, socketOptions);
@@ -31,7 +33,11 @@
         setupTextChat(socket, defaultName);
         setupVideoChat(socket, defaultName);
       })
-      .catch((err) => console.error("Live chat bootstrap failed:", err));
+      .catch((err) => {
+        console.error("Live chat bootstrap failed:", err);
+        wireDisplayNameSync(defaultName);
+        setupVideoChat(null, defaultName);
+      });
   });
 
   function onReady(cb) {
@@ -309,6 +315,7 @@
 
     const log = (message) => {
       if (!activityLog) return;
+      activityLog.hidden = false;
       const entry = document.createElement("p");
       entry.textContent = `[${formatTime(Date.now())}] ${message}`;
       activityLog.appendChild(entry);
@@ -317,6 +324,16 @@
         activityLog.removeChild(activityLog.firstChild);
       }
     };
+
+    if (!socket) {
+      const offlineNotice = () =>
+        log("Live video is offline right now. Please try again later.");
+      startBtn.addEventListener("click", offlineNotice);
+      stopBtn.addEventListener("click", () => {
+        log("You're not in a video room.");
+      });
+      return;
+    }
 
     const leaveRoom = () => {
       if (!joined) {

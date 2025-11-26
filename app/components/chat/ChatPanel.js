@@ -94,7 +94,13 @@ export default function ChatPanel() {
         </button>
       </form>
 
-      <div id="chat-video-log" className="chat-video-log"></div>
+      <div
+        id="chat-video-log"
+        className="chat-video-log"
+        hidden
+        aria-live="polite"
+        aria-atomic="false"
+      ></div>
     </div>
   );
 }
