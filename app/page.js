@@ -2,11 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const DEFAULT_API_BASE = "";
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_BASE).replace(
-  /\/$/,
-  ""
-);
+const getInitialApiBase = () => {
+  const envBase = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  if (typeof window === "undefined") return envBase;
+  const docBase =
+    document.documentElement?.dataset?.apiBase ||
+    document.body?.dataset?.apiBase ||
+    window.__LURK_API_BASE ||
+    "";
+  if (docBase) return docBase.replace(/\/$/, "");
+  if (envBase) return envBase;
+  if (window.location?.origin) return window.location.origin.replace(/\/$/, "");
+  return "";
+};
+
+const API_BASE = getInitialApiBase();
 
 const withApiBase = (path = "") => {
   if (!path) return API_BASE || "";
