@@ -3,11 +3,9 @@ services:
     name: lurk
     env: node
     plan: free
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    buildCommand: npm ci && cd lurk-backend && npm ci && cd .. && npm run build
+    startCommand: node lurk-backend/src/server.js
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
         value: 20
-      - key: NEXT_EXPORT
-        value: "0"
