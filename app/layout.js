@@ -14,7 +14,11 @@ import NavMenu from "./components/NavMenu";
 import MainScriptLoader from "./components/MainScriptLoader";
 import "../public/styles.css";
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.RENDER_BACKEND_URL ||
+  "https://lurk-8t7a.onrender.com"
+).replace(/\/$/, "");
 
 // ----------------------------------------
 // Root Layout — MUST be a Server Component

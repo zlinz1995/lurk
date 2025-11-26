@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const FALLBACK_RENDER_BACKEND = "https://lurk-8t7a.onrender.com";
+
 const guessRenderBackendFromLocation = () => {
   try {
     if (typeof window === "undefined") return "";
@@ -20,7 +22,11 @@ const guessRenderBackendFromLocation = () => {
 };
 
 const getInitialApiBase = () => {
-  const envBase = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  const envBase = (
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.RENDER_BACKEND_URL ||
+    ""
+  ).replace(/\/$/, "");
   if (typeof window === "undefined") return envBase;
   const docBase =
     document.documentElement?.dataset?.apiBase ||
@@ -31,6 +37,7 @@ const getInitialApiBase = () => {
   if (envBase) return envBase;
   const renderGuess = guessRenderBackendFromLocation();
   if (renderGuess) return renderGuess;
+  if (FALLBACK_RENDER_BACKEND) return FALLBACK_RENDER_BACKEND;
   if (window.location?.origin) return window.location.origin.replace(/\/$/, "");
   return "";
 };
