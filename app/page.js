@@ -2,6 +2,23 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const guessRenderBackendFromLocation = () => {
+  try {
+    if (typeof window === "undefined") return "";
+    const { origin, hostname, protocol } = window.location || {};
+    if (!hostname || !origin) return "";
+    if (!/onrender\.com$/i.test(hostname)) return "";
+    if (hostname.includes("backend")) return origin.replace(/\/$/, "");
+    if (hostname.includes("frontend")) {
+      const candidate = `${protocol}//${hostname.replace(/frontend/gi, "backend")}`;
+      return candidate.replace(/\/$/, "");
+    }
+    return "";
+  } catch {
+    return "";
+  }
+};
+
 const getInitialApiBase = () => {
   const envBase = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
   if (typeof window === "undefined") return envBase;
@@ -12,6 +29,8 @@ const getInitialApiBase = () => {
     "";
   if (docBase) return docBase.replace(/\/$/, "");
   if (envBase) return envBase;
+  const renderGuess = guessRenderBackendFromLocation();
+  if (renderGuess) return renderGuess;
   if (window.location?.origin) return window.location.origin.replace(/\/$/, "");
   return "";
 };
@@ -300,18 +319,26 @@ export default function HomePage() {
         if (!res.ok) {
           let message = "Unable to create thread. Please try again.";
           try {
-            const errorJson = await res.json();
-            if (errorJson?.error === "title_required") {
-              message = "Text is required to create a thread.";
-            } else if (errorJson?.error === "image_too_large") {
-              message = "Image is larger than the allowed limit.";
-            } else if (errorJson?.error === "media_too_large") {
-              message = "Media file exceeds the allowed limit.";
-            } else if (errorJson?.error === "invalid_file_type") {
-              message = "Unsupported media type.";
+            const contentType = res.headers.get("content-type") || "";
+            if (contentType.includes("application/json")) {
+              const errorJson = await res.json();
+              if (errorJson?.error === "title_required") {
+                message = "Text is required to create a thread.";
+              } else if (errorJson?.error === "image_too_large") {
+                message = "Image is larger than the allowed limit.";
+              } else if (errorJson?.error === "media_too_large") {
+                message = "Media file exceeds the allowed limit.";
+              } else if (errorJson?.error === "invalid_file_type") {
+                message = "Unsupported media type.";
+              }
+            } else {
+              const errorText = await res.text();
+              if (errorText) {
+                message = errorText.slice(0, 280);
+              }
             }
           } catch {
-            // ignore JSON parse issues
+            // ignore parse issues
           }
           throw new Error(message);
         }
