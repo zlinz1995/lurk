@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const DEFAULT_API_BASE = "http://localhost:4000";
-const API_BASE = (
-  process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_BASE
-).replace(/\/$/, "");
+const DEFAULT_API_BASE = "";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_BASE).replace(
+  /\/$/,
+  ""
+);
 
 const withApiBase = (path = "") => {
   if (!path) return API_BASE || "";
