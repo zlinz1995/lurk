@@ -13,8 +13,9 @@ import { Server as SocketIOServer } from "socket.io";
 
 const THREAD_TTL_MS = Number(process.env.THREAD_TTL_MS || 24 * 60 * 60 * 1000);
 const MAX_MEDIA_BYTES = Number(process.env.MAX_MEDIA_BYTES || 15 * 1024 * 1024);
-const DB_PATH = path.join(process.cwd(), ".data", process.env.DB_NAME || "lurk.db");
-const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+const DATA_DIR = process.env.DATA_DIR || "/tmp/lurk-data";
+const DB_PATH = path.join(DATA_DIR, process.env.DB_NAME || "threads.db");
+const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const ALLOWED_MEDIA_PREFIXES = ["image/", "video/", "audio/"];
 const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000);
 const RATE_LIMIT_STANDARD_HEADERS = true;
@@ -385,6 +386,7 @@ function classifyMediaType(mimeType) {
 }
 
 function ensureDirectories() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
