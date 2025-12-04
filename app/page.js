@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const FALLBACK_RENDER_BACKEND = "https://lurk-8t7a.onrender.com";
+const LOCAL_DEV_API_BASE = "http://localhost:4000";
 
 const guessRenderBackendFromLocation = () => {
   try {
@@ -28,6 +29,8 @@ const getInitialApiBase = () => {
     ""
   ).replace(/\/$/, "");
   if (typeof window === "undefined") return envBase;
+
+  // Respect explicitly injected values first.
   const docBase =
     document.documentElement?.dataset?.apiBase ||
     document.body?.dataset?.apiBase ||
@@ -35,10 +38,21 @@ const getInitialApiBase = () => {
     "";
   if (docBase) return docBase.replace(/\/$/, "");
   if (envBase) return envBase;
+
+  // Prefer local API when running the UI on localhost.
+  const { hostname, origin } = window.location || {};
+  const isLocalhost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]";
+  if (isLocalhost && LOCAL_DEV_API_BASE) {
+    return LOCAL_DEV_API_BASE.replace(/\/$/, "");
+  }
+
   const renderGuess = guessRenderBackendFromLocation();
   if (renderGuess) return renderGuess;
   if (FALLBACK_RENDER_BACKEND) return FALLBACK_RENDER_BACKEND;
-  if (window.location?.origin) return window.location.origin.replace(/\/$/, "");
+  if (origin) return origin.replace(/\/$/, "");
   return "";
 };
 

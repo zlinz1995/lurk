@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import http from "http";
+import crypto from "crypto";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -10,6 +11,8 @@ import Database from "better-sqlite3";
 import helmet from "helmet";
 import morgan from "morgan";
 import { Server as SocketIOServer } from "socket.io";
+import getQuantumBits from "./utils/getQuantumBits.js";
+
 
 const THREAD_TTL_MS = Number(process.env.THREAD_TTL_MS || 24 * 60 * 60 * 1000);
 const MAX_MEDIA_BYTES = Number(process.env.MAX_MEDIA_BYTES || 15 * 1024 * 1024);
@@ -216,7 +219,7 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     }
   });
 
-  app.post("/threads/:id/react", reactLimiter, (req, res) => {
+  app.post("/threads/:id/react", reactLimiter, async (req, res) => {
     const threadId = Number(req.params.id);
     if (!Number.isInteger(threadId)) {
       return res.status(400).json({ error: "invalid_thread" });
@@ -230,7 +233,9 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     const clientIp = req.ip || req.connection?.remoteAddress || "unknown";
     const reactKey = `${threadId}:${clientIp}`;
     const nowMs = Date.now();
+
     pruneReactionMemory(nowMs);
+
     if (reactMemory.has(reactKey)) {
       return res.status(429).json({ error: "already_reacted" });
     }
@@ -238,8 +243,21 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     const thread = db
       .prepare("SELECT id, reactions FROM threads WHERE id = ? LIMIT 1")
       .get(threadId);
+
     if (!thread) {
       return res.status(404).json({ error: "not_found" });
+    }
+
+    // 🔥 Quantum Reaction ID generation
+    let reactionId = null;
+    let quantumBits = null;
+    try {
+      quantumBits = await getQuantumBits(32);
+      reactionId = parseInt(quantumBits, 2);
+    } catch (err) {
+      console.error("Quantum bit generation failed:", err);
+      // Still allow reaction, but set reactionId to null
+      reactionId = null;
     }
 
     const reactions = safeJsonParse(thread.reactions, {});
@@ -250,11 +268,21 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
         JSON.stringify(reactions),
         threadId
       );
+
       reactMemory.set(reactKey, nowMs);
-      res.json({ reactions });
+
+      return res.json({
+        ok: true,
+        threadId,
+        emoji,
+        reactions,
+        reactionId,     // quantum-based reaction ID
+        quantumBits,    // raw quantum bitstring for debugging/UI
+        timestamp: nowMs,
+      });
     } catch (error) {
       console.error("Failed to record reaction", error);
-      res.status(500).json({ error: "server_error" });
+      return res.status(500).json({ error: "server_error" });
     }
   });
 
@@ -325,13 +353,42 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
 function createUploadMiddleware() {
   const storage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+
     filename: (_req, file, cb) => {
+      // We can't mark this function async because Multer doesn't support it.
+      // So we call the quantum generator and handle it via Promise.
       const ext =
-        (mime.extension(file.mimetype) || path.extname(file.originalname) || "bin")
+        (mime.extension(file.mimetype) ||
+          path.extname(file.originalname) ||
+          "bin")
           .toString()
           .replace(/[^a-zA-Z0-9.]/g, "") || "bin";
-      const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-      cb(null, `${unique}.${ext}`);
+
+      const finalize = (id) => cb(null, `${id}.${ext}`);
+
+      getQuantumBits(64)
+        .then((bitString) => {
+          // Convert bitstring to base32 (URL/file safe)
+          const quantumId = BigInt("0b" + bitString)
+            .toString(32)
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, "");
+
+          finalize(quantumId);
+        })
+        .catch((error) => {
+          console.error("Quantum filename generation failed:", error);
+
+          // Fallback: crypto-based ID in the same base32-ish format
+          const fallbackId = BigInt(
+            "0x" + crypto.randomBytes(16).toString("hex")
+          )
+            .toString(32)
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, "");
+
+          finalize(fallbackId || `${Date.now()}-${Math.round(Math.random() * 1e9)}`);
+        });
     },
   });
 

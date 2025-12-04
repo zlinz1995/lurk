@@ -5,6 +5,7 @@ import express from "express";
 import { createRequire } from "module";
 import { loadEnv } from "./config/env.js";
 import { attachApiLayer } from "./lurkApi.js";
+import quantumRoutes from "./routes/quantum.js";
 
 loadEnv();
 
@@ -16,6 +17,8 @@ const require = createRequire(import.meta.url);
 
 const app = express();
 const server = http.createServer(app);
+
+app.use("/api/quantum", quantumRoutes);
 
 // Serve a guaranteed socket.io client build (safety net if the default handler is blocked)
 app.get("/socket.io/socket.io.js", (_req, res, next) => {
