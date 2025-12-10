@@ -22,7 +22,7 @@ export default function RootLayout({ children }) {
           aria-label="Open live chat"
           style={{ display: "flex" }}
         >
-          dY'ª
+          💬
         </button>
         <aside
           className="chat-panel-container glass-panel"

@@ -169,136 +169,135 @@ export default function ReportPage() {
 
         <section className="glass-card">
           <h2 className="home-section-title">Submit a report</h2>
-          <div className="blog-grid">
-            <div className="blog-card" style={{ gridColumn: "1 / -1" }}>
-              <form id="report-form" className="report-form" onSubmit={handleReportSubmit}>
-                <label htmlFor="report-type">Category</label>
-                <select id="report-type" name="category" required defaultValue="">
-                  <option value="" disabled>
-                    Choose a category
+          <div className="blog-card" style={{ gridColumn: "1 / -1", padding: "32px" }}>
+            <form id="report-form" className="report-form" onSubmit={handleReportSubmit}>
+              <label htmlFor="report-type">Category</label>
+              <select id="report-type" name="category" required defaultValue="">
+                <option value="" disabled>
+                  Choose a category
+                </option>
+                {reportCategories.map((entry) => (
+                  <option key={entry.value} value={entry.value}>
+                    {entry.label}
                   </option>
-                  {reportCategories.map((entry) => (
-                    <option key={entry.value} value={entry.value}>
-                      {entry.label}
-                    </option>
-                  ))}
-                </select>
+                ))}
+              </select>
 
-                <label htmlFor="report-impact">Impact</label>
-                <select id="report-impact" name="impact" required defaultValue="">
-                  <option value="" disabled>
-                    How urgent is this?
+              <label htmlFor="report-impact">Impact</label>
+              <select id="report-impact" name="impact" required defaultValue="">
+                <option value="" disabled>
+                  How urgent is this?
+                </option>
+                {impactLevels.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
                   </option>
-                  {impactLevels.map((level) => (
-                    <option key={level} value={level}>
-                      {level}
-                    </option>
-                  ))}
-                </select>
+                ))}
+              </select>
 
-                <label htmlFor="report-link">Links or thread IDs</label>
-                <input
-                  id="report-link"
-                  type="text"
-                  placeholder="Paste the thread URL or describe where it lives"
-                  required
-                  name="link"
-                />
+              <label htmlFor="report-link">Links or thread IDs</label>
+              <input
+                id="report-link"
+                type="text"
+                placeholder="Paste the thread URL or describe where it lives"
+                required
+                name="link"
+              />
 
-                <label htmlFor="report-details">Details</label>
-                <textarea
-                  id="report-details"
-                  name="details"
-                  rows={5}
-                  placeholder="Describe what happened, who was involved, and why it breaks the rules."
-                  required
-                />
+              <label htmlFor="report-details">Details</label>
+              <textarea
+                id="report-details"
+                name="details"
+                rows={5}
+                placeholder="Describe what happened, who was involved, and why it breaks the rules."
+                required
+              />
 
-                <label htmlFor="report-contact">Contact (optional)</label>
-                <input
-                  id="report-contact"
-                  type="email"
-                  placeholder="Email or @handle so we can follow up"
-                  name="contact"
-                />
+              <label htmlFor="report-contact">Contact (optional)</label>
+              <input
+                id="report-contact"
+                type="email"
+                placeholder="Email or @handle so we can follow up"
+                name="contact"
+              />
 
-                <button type="submit" disabled={reportStatus.state === "loading"}>
-                  {reportStatus.state === "loading" ? "Sending..." : "Send Report"}
-                </button>
+              <button type="submit" disabled={reportStatus.state === "loading"}>
+                {reportStatus.state === "loading" ? "Sending..." : "Send Report"}
+              </button>
 
-                {reportStatus.message ? (
-                  <p
-                    className={`form-status ${
-                      reportStatus.state === "error" ? "form-status-error" : "form-status-success"
-                    }`}
-                  >
-                    {reportStatus.message}
-                  </p>
-                ) : null}
-              </form>
-            </div>
+              {reportStatus.message ? (
+                <p
+                  className={`form-status ${
+                    reportStatus.state === "error" ? "form-status-error" : "form-status-success"
+                  }`}
+                >
+                  {reportStatus.message}
+                </p>
+              ) : null}
+            </form>
 
-            <div className="blog-card" style={{ gridColumn: "1 / -1" }}>
-              <h3 style={{ textAlign: "center" }}>Ping @mods (fast lane)</h3>
-              <p style={{ textAlign: "center", color: "var(--c-muted)" }}>
-                This sends an email straight to the on-call inbox at z.linz@outlook.com when something
-                needs eyes right now.
+            <hr style={{ margin: "32px 0", borderColor: "rgba(255,255,255,0.12)" }} />
+
+            <div style={{ textAlign: "center", marginBottom: "16px" }}>
+              <h3 style={{ margin: "0 0 8px" }}>Ping @mods (fast lane)</h3>
+              <p style={{ color: "var(--c-muted)", margin: 0 }}>
+                Sends an email straight to z.linz@outlook.com when something needs eyes right now.
               </p>
-
-              <form id="ping-form" className="report-form" onSubmit={handlePingSubmit}>
-                <label htmlFor="ping-urgency">Urgency</label>
-                <select id="ping-urgency" name="urgency" required defaultValue="">
-                  <option value="" disabled>
-                    Choose urgency
-                  </option>
-                  {pingUrgencies.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-
-                <label htmlFor="ping-link">Link or thread ID</label>
-                <input
-                  id="ping-link"
-                  name="link"
-                  type="text"
-                  placeholder="Paste the thread link or short description"
-                  required
-                />
-
-                <label htmlFor="ping-details">What should we know?</label>
-                <textarea
-                  id="ping-details"
-                  name="details"
-                  rows={4}
-                  placeholder="Explain what is happening and why you need immediate help."
-                  required
-                />
-
-                <label htmlFor="ping-contact">How can we reach you? (optional)</label>
-                <input
-                  id="ping-contact"
-                  name="contact"
-                  type="text"
-                  placeholder="Email or @handle so mods can follow up"
-                />
-
-                <button type="submit" disabled={pingStatus.state === "loading"}>
-                  {pingStatus.state === "loading" ? "Sending ping..." : "Ping @mods"}
-                </button>
-
-                {pingStatus.message ? (
-                  <p
-                    className={`form-status ${
-                      pingStatus.state === "error" ? "form-status-error" : "form-status-success"
-                    }`}
-                  >
-                    {pingStatus.message}
-                  </p>
-                ) : null}
-              </form>
             </div>
+
+            <form id="ping-form" className="report-form" onSubmit={handlePingSubmit}>
+              <label htmlFor="ping-urgency">Urgency</label>
+              <select id="ping-urgency" name="urgency" required defaultValue="">
+                <option value="" disabled>
+                  Choose urgency
+                </option>
+                {pingUrgencies.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+
+              <label htmlFor="ping-link">Link or thread ID</label>
+              <input
+                id="ping-link"
+                name="link"
+                type="text"
+                placeholder="Paste the thread link or short description"
+                required
+              />
+
+              <label htmlFor="ping-details">What should we know?</label>
+              <textarea
+                id="ping-details"
+                name="details"
+                rows={4}
+                placeholder="Explain what is happening and why you need immediate help."
+                required
+              />
+
+              <label htmlFor="ping-contact">How can we reach you? (optional)</label>
+              <input
+                id="ping-contact"
+                name="contact"
+                type="text"
+                placeholder="Email or @handle so mods can follow up"
+              />
+
+              <button type="submit" disabled={pingStatus.state === "loading"}>
+                {pingStatus.state === "loading" ? "Sending ping..." : "Ping @mods"}
+              </button>
+
+              {pingStatus.message ? (
+                <p
+                  className={`form-status ${
+                    pingStatus.state === "error" ? "form-status-error" : "form-status-success"
+                  }`}
+                >
+                  {pingStatus.message}
+                </p>
+              ) : null}
+            </form>
           </div>
         </section>
 
