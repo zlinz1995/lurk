@@ -1,4 +1,4 @@
-package com.onrender.lurk_8t7a.twa;
+package com.lurk_app.twa;
 
 
 import com.google.androidbrowserhelper.playbilling.digitalgoods.DigitalGoodsRequestHandler;

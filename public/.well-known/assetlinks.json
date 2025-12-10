@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.lurk_app.twa",
+    "sha256_cert_fingerprints": [
+      "7D:AA:83:FD:BE:5A:71:AF:92:70:8A:26:C5:5C:3E:74:13:14:DA:3E:35:11:55:50:95:9A:12:A6:D9:91:72:08"
+    ]
+  }
+}]

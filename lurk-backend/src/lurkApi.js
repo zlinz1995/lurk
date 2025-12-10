@@ -10,6 +10,7 @@ import mime from "mime-types";
 import Database from "better-sqlite3";
 import helmet from "helmet";
 import morgan from "morgan";
+import nodemailer from "nodemailer";
 import { Server as SocketIOServer } from "socket.io";
 import getQuantumBits from "./utils/getQuantumBits.js";
 
@@ -24,6 +25,9 @@ const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000);
 const RATE_LIMIT_STANDARD_HEADERS = true;
 const RATE_LIMIT_LEGACY_HEADERS = false;
 const REACT_MEMORY_TTL = Number(process.env.REACT_TTL_MS || 24 * 60 * 60 * 1000);
+const MOD_ALERT_EMAIL = process.env.MOD_ALERT_EMAIL || "z.linz@outlook.com";
+const DEFAULT_FROM_EMAIL =
+  process.env.SMTP_FROM || process.env.SMTP_USER || MOD_ALERT_EMAIL;
 const reactMemory = new Map(); // key: `${threadId}:${ip}`, value: timestamp
 
 const createLimiter = ({
@@ -45,6 +49,9 @@ const readLimiter = createLimiter({ limit: 240 });
 const writeLimiter = createLimiter({ windowMs: 5 * 60 * 1000, limit: 30 });
 const reactLimiter = createLimiter({ windowMs: 60 * 1000, limit: 90 });
 const reportLimiter = createLimiter({ windowMs: 10 * 60 * 1000, limit: 5 });
+const pingLimiter = createLimiter({ windowMs: 5 * 60 * 1000, limit: 8 });
+let mailTransportCache = null;
+let mailTransportResolved = false;
 
 export function attachApiLayer({ app, server, dev = false } = {}) {
   if (!app || !server) {
@@ -345,6 +352,53 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
     }
   });
 
+  app.post("/ping-mods", pingLimiter, async (req, res) => {
+    const payload = {
+      urgency: sanitizeText(req.body?.urgency || "", 64),
+      link: sanitizeText(req.body?.link || "", 512),
+      details: sanitizeText(req.body?.details || "", 2000),
+      contact: sanitizeText(req.body?.contact || "", 128),
+    };
+
+    if (!payload.details && !payload.link) {
+      return res.status(400).json({ error: "missing_fields" });
+    }
+
+    const transport = getMailTransport();
+    if (!transport) {
+      console.error("Ping @mods email transport is not configured");
+      return res.status(500).json({ error: "email_not_configured" });
+    }
+
+    const subject = `[Lurk] Ping @mods${payload.urgency ? ` - ${payload.urgency}` : ""}`;
+    const replyTo =
+      payload.contact && payload.contact.includes("@") ? payload.contact : undefined;
+    const body = [
+      `Urgency: ${payload.urgency || "Not specified"}`,
+      payload.link ? `Link or thread: ${payload.link}` : null,
+      payload.details ? `Details:\n${payload.details}` : null,
+      payload.contact ? `Contact: ${payload.contact}` : null,
+      `Submitted: ${new Date().toISOString()}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    try {
+      await transport.sendMail({
+        to: MOD_ALERT_EMAIL,
+        from: DEFAULT_FROM_EMAIL,
+        replyTo,
+        subject,
+        text: body,
+      });
+
+      res.status(201).json({ ok: true });
+    } catch (error) {
+      console.error("Failed to send ping email", error);
+      res.status(500).json({ error: "email_failed" });
+    }
+  });
+
   setupSockets(server);
 
   return { db };
@@ -622,6 +676,49 @@ function clampInt(input, min, max) {
   const num = Number.parseInt(input, 10);
   if (Number.isNaN(num)) return null;
   return Math.max(min, Math.min(max, num));
+}
+
+function getMailTransport() {
+  if (mailTransportResolved) return mailTransportCache;
+  mailTransportResolved = true;
+
+  const connectionString =
+    process.env.SMTP_URL || process.env.SMTP_CONNECTION_STRING || "";
+  if (connectionString) {
+    try {
+      mailTransportCache = nodemailer.createTransport(connectionString);
+    } catch (error) {
+      console.error("Failed to create mail transport from SMTP_URL", error);
+      mailTransportCache = null;
+    }
+    return mailTransportCache;
+  }
+
+  const host = process.env.SMTP_HOST;
+  if (host) {
+    const port = Number(process.env.SMTP_PORT || 587);
+    try {
+      mailTransportCache = nodemailer.createTransport({
+        host,
+        port,
+        secure: process.env.SMTP_SECURE === "true" || port === 465,
+        auth: process.env.SMTP_USER
+          ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          : undefined,
+      });
+    } catch (error) {
+      console.error("Failed to create mail transport from SMTP_HOST", error);
+      mailTransportCache = null;
+    }
+    return mailTransportCache;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    mailTransportCache = nodemailer.createTransport({ jsonTransport: true });
+    return mailTransportCache;
+  }
+
+  return null;
 }
 
 function setupSockets(server) {
