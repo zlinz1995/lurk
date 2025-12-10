@@ -1,0 +1,10 @@
+@import "../.next-dev/styles.css";
+
+/* Minimal fallbacks if the import ever fails */
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: "Inter", system-ui, sans-serif;
+  background: #070b12;
+  color: #e7f6ff;
+}
