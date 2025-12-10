@@ -14,10 +14,12 @@ export default function RootLayout({ children }) {
     <html lang="en" data-api-base={apiBase}>
       <body>
         {children}
+        <ChatShell />
 
         <button
           type="button"
           className="chat-bubble chat-bubble-visible"
+          id="live-chat-bubble"
           aria-hidden="false"
           aria-label="Open live chat"
           style={{ display: "flex" }}
@@ -26,6 +28,7 @@ export default function RootLayout({ children }) {
         </button>
         <aside
           className="chat-panel-container glass-panel"
+          id="live-chat-panel"
           style={{ display: "none" }}
           aria-hidden="true"
           aria-label="Live chat"
@@ -101,9 +104,9 @@ export default function RootLayout({ children }) {
             <div id="chat-video-log" className="chat-video-log"></div>
           </div>
         </aside>
-
-        <script src="/.next-dev/main.js" async></script>
+        <script src="/main.js" async></script>
       </body>
     </html>
   );
 }
+import ChatShell from "../components/ChatShell.jsx";
