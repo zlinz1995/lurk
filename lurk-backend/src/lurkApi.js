@@ -10,9 +10,9 @@ import mime from "mime-types";
 import Database from "better-sqlite3";
 import helmet from "helmet";
 import morgan from "morgan";
-import nodemailer from "nodemailer";
 import { Server as SocketIOServer } from "socket.io";
 import getQuantumBits from "./utils/getQuantumBits.js";
+import { createRequire } from "module";
 
 
 const THREAD_TTL_MS = Number(process.env.THREAD_TTL_MS || 24 * 60 * 60 * 1000);
@@ -52,6 +52,9 @@ const reportLimiter = createLimiter({ windowMs: 10 * 60 * 1000, limit: 5 });
 const pingLimiter = createLimiter({ windowMs: 5 * 60 * 1000, limit: 8 });
 let mailTransportCache = null;
 let mailTransportResolved = false;
+const require = createRequire(import.meta.url);
+let nodemailerModule = null;
+let nodemailerAttempted = false;
 
 export function attachApiLayer({ app, server, dev = false } = {}) {
   if (!app || !server) {
@@ -682,6 +685,12 @@ function getMailTransport() {
   if (mailTransportResolved) return mailTransportCache;
   mailTransportResolved = true;
 
+  const nodemailer = loadNodemailer();
+  if (!nodemailer) {
+    mailTransportCache = null;
+    return mailTransportCache;
+  }
+
   const connectionString =
     process.env.SMTP_URL || process.env.SMTP_CONNECTION_STRING || "";
   if (connectionString) {
@@ -719,6 +728,18 @@ function getMailTransport() {
   }
 
   return null;
+}
+
+function loadNodemailer() {
+  if (nodemailerAttempted) return nodemailerModule;
+  nodemailerAttempted = true;
+  try {
+    nodemailerModule = require("nodemailer");
+  } catch (error) {
+    console.error("Nodemailer not available; email features disabled.", error?.message || error);
+    nodemailerModule = null;
+  }
+  return nodemailerModule;
 }
 
 function setupSockets(server) {
