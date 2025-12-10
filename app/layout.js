@@ -1,4 +1,4 @@
-"use client";
+// ❌ DO NOT PUT "use client" HERE
 
 import "./globals.css";
 
@@ -8,10 +8,8 @@ export const metadata = {
 };
 
 export default function RootLayout({ children }) {
-  const apiBase = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
-
   return (
-    <html lang="en" data-api-base={apiBase}>
+    <html lang="en">
       <body>{children}</body>
     </html>
   );
