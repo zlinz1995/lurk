@@ -68,7 +68,8 @@ export function attachApiLayer({ app, server, dev = false } = {}) {
   purgeExpiredThreads(db);
   setInterval(() => purgeExpiredThreads(db), 30 * 60 * 1000).unref();
 
-  app.set("trust proxy", true);
+  // Trust only the first proxy (e.g., Render/Heroku) so express-rate-limit validation passes
+  app.set("trust proxy", 1);
   app.use(
     helmet({
       contentSecurityPolicy: false,
