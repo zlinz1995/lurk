@@ -1,6 +1,7 @@
 // ❌ DO NOT PUT "use client" HERE
 
 import "./globals.css";
+import { resolveApiBase } from "./src/resolveApiBase.js";
 
 export const metadata = {
   title: "Lurk",
@@ -8,7 +9,7 @@ export const metadata = {
 };
 
 export default function RootLayout({ children }) {
-  const apiBase = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+  const apiBase = resolveApiBase(process.env.NEXT_PUBLIC_API_URL);
 
   return (
     <html lang="en" data-api-base={apiBase}>

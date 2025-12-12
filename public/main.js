@@ -627,10 +627,45 @@
         document.documentElement?.dataset?.apiBase ||
         document.body?.dataset?.apiBase ||
         "";
-      return source ? source.replace(/\/$/, "") : "";
+      const trimmed = source ? source.replace(/\/$/, "") : "";
+      const currentHost = window.location?.hostname || "";
+      const onLocalhost = isLocalHost(currentHost);
+
+      if (!onLocalhost) {
+        if (!trimmed) return "";
+        const baseHost = getHostname(trimmed);
+        if (isLocalHost(baseHost)) return "";
+        if (window.location.protocol === "https:" && trimmed.startsWith("http://")) {
+          return "";
+        }
+      }
+
+      return trimmed;
     } catch {
       return "";
     }
+  }
+
+  function getHostname(url = "") {
+    if (!url) return "";
+    try {
+      return new URL(url).hostname;
+    } catch (_err) {
+      try {
+        return new URL(url, window.location.origin).hostname;
+      } catch {
+        return "";
+      }
+    }
+  }
+
+  function isLocalHost(hostname = "") {
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]" ||
+      hostname.endsWith(".local")
+    );
   }
 
   function sanitizeName(value) {

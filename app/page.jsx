@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { resolveApiBase } from "./src/resolveApiBase.js";
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+const API_BASE = resolveApiBase(process.env.NEXT_PUBLIC_API_URL);
 
 const apiPath = (path = "") => {
-  if (!path) return API_BASE;
+  const base = API_BASE;
+  if (!path) return base;
   const normalized = path.startsWith("/") ? path : `/${path}`;
-  return API_BASE ? `${API_BASE}${normalized}` : normalized;
+  return base ? `${base}${normalized}` : normalized;
 };
 
 const dedupeThreads = (threads = []) => {
