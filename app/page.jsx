@@ -3,10 +3,35 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+
 const apiPath = (path = "") => {
   if (!path) return API_BASE;
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return API_BASE ? `${API_BASE}${normalized}` : normalized;
+};
+
+const dedupeThreads = (threads = []) => {
+  const seen = new Set();
+  return threads.filter((thread) => {
+    const key = thread?.id ?? thread?.code ?? thread?.timestamp;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const parseThreadList = (value) => (Array.isArray(value) ? value : []);
+
+const friendlyError = (code) => {
+  const normalized = String(code || "").toLowerCase();
+  if (normalized.includes("media_too_large")) return "File is too large (max 15MB).";
+  if (normalized.includes("invalid_file_type")) return "Only images, video, or audio files are allowed.";
+  if (normalized.includes("title_required") || normalized.includes("text_required")) {
+    return "Message is required.";
+  }
+  if (normalized.includes("too_many_requests")) return "You're posting too quickly. Please slow down.";
+  if (normalized.includes("failed to fetch")) return "Network error. Check your connection and try again.";
+  return "Could not post. Please try again.";
 };
 
 export default function HomePage() {
@@ -20,21 +45,31 @@ export default function HomePage() {
 
   const charsLeft = useMemo(() => 500 - (text?.length || 0), [text]);
 
+  const fetchThreadLists = useCallback(async () => {
+    const [latestRes, topRes] = await Promise.all([
+      fetch(apiPath("/threads")),
+      fetch(apiPath("/threads/most-viewed")),
+    ]);
+
+    const latestJson = latestRes.ok ? await latestRes.json() : [];
+    const topJson = topRes.ok ? await topRes.json() : [];
+
+    return {
+      latest: parseThreadList(latestJson),
+      top: parseThreadList(topJson),
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const [latestRes, topRes] = await Promise.all([
-          fetch(apiPath("/threads")),
-          fetch(apiPath("/threads/most-viewed")),
-        ]);
-        const latestJson = latestRes.ok ? await latestRes.json() : [];
-        const topJson = topRes.ok ? await topRes.json() : [];
+        const { latest: latestThreads, top: topThreads } = await fetchThreadLists();
         if (!cancelled) {
-          setLatest(Array.isArray(latestJson) ? latestJson : []);
-          setTop(Array.isArray(topJson) ? topJson : []);
+          setLatest(latestThreads);
+          setTop(topThreads);
         }
-      } catch (err) {
+      } catch (_err) {
         if (!cancelled) {
           setLatest([]);
           setTop([]);
@@ -47,7 +82,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fetchThreadLists]);
 
   const handleSubmit = useCallback(
     async (event) => {
@@ -62,33 +97,49 @@ export default function HomePage() {
       if (file) payload.append("image", file);
       if (nsfw) payload.append("sensitive", "on");
 
-      setFormState({ state: "loading", message: "Posting…" });
+      setFormState({ state: "loading", message: "Posting..." });
       try {
         const response = await fetch(apiPath("/threads"), {
           method: "POST",
           body: payload,
         });
-        if (!response.ok) throw new Error("failed");
+        const responseJson = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(responseJson?.error || "failed");
 
         setText("");
         setFile(null);
         setNsfw(false);
-        setFormState({ state: "success", message: "Posted. Refreshing…" });
-        // Refresh lists
-        const [latestRes, topRes] = await Promise.all([
-          fetch(apiPath("/threads")),
-          fetch(apiPath("/threads/most-viewed")),
-        ]);
-        if (latestRes.ok) setLatest(await latestRes.json());
-        if (topRes.ok) setTop(await topRes.json());
+
+        const createdThread =
+          responseJson && typeof responseJson === "object" ? responseJson : null;
+        if (createdThread?.id) {
+          setLatest((prev) => dedupeThreads([createdThread, ...parseThreadList(prev)]));
+          setTop((prev) => dedupeThreads([createdThread, ...parseThreadList(prev)]));
+        }
+
+        setFormState({ state: "success", message: "Posted! Updating feed..." });
+
+        try {
+          const { latest: latestThreads, top: topThreads } = await fetchThreadLists();
+          setLatest(latestThreads);
+          setTop(topThreads);
+          setFormState({ state: "success", message: "Posted!" });
+        } catch (_err) {
+          setFormState({
+            state: "success",
+            message: "Posted! Feed will sync when the network returns.",
+          });
+        }
+
+        setTimeout(() => setFormState({ state: "idle", message: "" }), 2500);
       } catch (err) {
         setFormState({
           state: "error",
-          message: "Could not post. Please try again.",
+          message: friendlyError(err?.message),
         });
       }
     },
-    [file, nsfw, text]
+    [file, fetchThreadLists, nsfw, text]
   );
 
   return (
@@ -167,7 +218,7 @@ export default function HomePage() {
             </div>
 
             <button type="submit" disabled={formState.state === "loading"}>
-              {formState.state === "loading" ? "Posting…" : "Post"}
+              {formState.state === "loading" ? "Posting..." : "Post"}
             </button>
             {formState.message ? (
               <p
@@ -184,7 +235,7 @@ export default function HomePage() {
         <section className="glass-card">
           <h2 className="home-section-title">Most Viewed</h2>
           {loadingLists ? (
-            <p>Loading top threads…</p>
+            <p>Loading top threads...</p>
           ) : top.length ? (
             <div id="threads" style={{ display: "grid", gap: "16px" }}>
               {top.map((thread) => (
@@ -209,7 +260,7 @@ export default function HomePage() {
         <section className="glass-card">
           <h2 className="home-section-title">Latest Threads</h2>
           {loadingLists ? (
-            <p>Loading the latest threads…</p>
+            <p>Loading the latest threads...</p>
           ) : latest.length ? (
             <div id="threads" style={{ display: "grid", gap: "16px" }}>
               {latest.map((thread) => (

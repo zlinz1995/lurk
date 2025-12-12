@@ -23,29 +23,93 @@ const evergreenPosts = [
   },
 ];
 
-function getRecentChanges() {
+const safeExec = (command) => {
   try {
-    const raw = execSync(
-      'git log --since="7 days ago" --date=short --pretty=format:%h%x1f%ad%x1f%s%x1e',
-      { cwd: process.cwd(), stdio: ["ignore", "pipe", "ignore"] }
-    )
+    return execSync(command, {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "ignore"],
+    })
       .toString()
       .trim();
-
-    if (!raw) return [];
-
-    return raw
-      .split("\x1e")
-      .filter(Boolean)
-      .map((entry) => {
-        const [hash = "", date = "", subject = "Unlabeled change"] = entry
-          .split("\x1f")
-          .map((part) => part.trim());
-        return { hash, date, subject };
-      });
   } catch (_error) {
-    return [];
+    return "";
   }
+};
+
+const parseShortStat = (raw = "") => {
+  const match = raw.match(
+    /(\d+)\s+files?\s+changed(?:,\s+(\d+)\s+insertions?\(\+\))?(?:,\s+(\d+)\s+deletions?\(-\))?/i
+  );
+  if (!match) return null;
+  return {
+    filesChanged: Number(match[1] || 0),
+    insertions: Number(match[2] || 0),
+    deletions: Number(match[3] || 0),
+  };
+};
+
+const summarizeCommit = (hash, subject = "") => {
+  if (!hash) return subject || "Recent changes";
+
+  const fileOutput = safeExec(`git show --name-only --pretty=format: --no-patch ${hash}`);
+  const statLine = safeExec(`git show --shortstat --pretty=format: --no-patch ${hash}`)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .pop();
+
+  const files = fileOutput
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const scopes = new Set();
+  files.forEach((file) => {
+    const [scope] = file.split("/");
+    if (["app", "components", "public"].includes(scope)) scopes.add("UI");
+    else if (["lurk-backend", "api"].includes(scope)) scopes.add("API");
+    else if (scope === "quantum-worker") scopes.add("Worker");
+    else if (scope) scopes.add("Chores");
+  });
+
+  const scopeText = scopes.size
+    ? `${Array.from(scopes).slice(0, 2).join(" + ")} updates`
+    : "";
+
+  const stats = statLine ? parseShortStat(statLine) : null;
+  const statText = stats
+    ? [
+        `${stats.filesChanged} file${stats.filesChanged === 1 ? "" : "s"}`,
+        stats.insertions || stats.deletions ? `${stats.insertions}+/${stats.deletions}-` : "",
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : "";
+
+  return [scopeText, statText].filter(Boolean).join(" | ") || subject || "Code updates";
+};
+
+function getRecentChanges() {
+  const raw = safeExec(
+    'git log --since="7 days ago" --date=short --pretty=format:%h%x1f%ad%x1f%s%x1e'
+  );
+  if (!raw) return [];
+
+  return raw
+    .split("\x1e")
+    .filter(Boolean)
+    .map((entry) => {
+      const [hash = "", date = "", subject = "Unlabeled change"] = entry
+        .split("\x1f")
+        .map((part) => part.trim());
+
+      return {
+        hash,
+        date,
+        subject,
+        summary: summarizeCommit(hash, subject),
+      };
+    });
 }
 
 export default function BlogPage() {
@@ -127,10 +191,15 @@ export default function BlogPage() {
             <div className="blog-grid">
               {weeklyChanges.map((change) => (
                 <article key={`${change.hash}-${change.date}`} className="blog-card">
-                  <h3>{change.subject}</h3>
-                  <p style={{ marginBottom: "12px" }}>
+                  <h3>{change.summary || change.subject}</h3>
+                  <p style={{ marginBottom: "8px" }}>
                     Committed on <time dateTime={change.date}>{change.date}</time>.
                   </p>
+                  {change.subject ? (
+                    <p style={{ marginTop: "0", marginBottom: "12px", color: "var(--c-muted)" }}>
+                      Message: {change.subject}
+                    </p>
+                  ) : null}
                   <div
                     style={{
                       display: "flex",
