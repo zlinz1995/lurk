@@ -13,6 +13,7 @@ const PORT = process.env.PORT || process.env.API_PORT || 4000;
 const dev = process.env.NODE_ENV !== "production";
 const ROOT_DIR = process.cwd();
 const STATIC_DIR = path.join(ROOT_DIR, "out");
+const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const require = createRequire(import.meta.url);
 
 const app = express();
@@ -28,6 +29,13 @@ app.get("/socket.io/socket.io.js", (_req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+app.get("/main.js", (_req, res, next) => {
+  const mainPath = path.join(PUBLIC_DIR, "main.js");
+  if (!fs.existsSync(mainPath)) return next();
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(mainPath);
 });
 
 if (fs.existsSync(STATIC_DIR)) {

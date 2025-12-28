@@ -1,148 +1,45 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { resolveApiBase } from "./src/resolveApiBase.js";
-
-const API_BASE = resolveApiBase(process.env.NEXT_PUBLIC_API_URL);
-
-const apiPath = (path = "") => {
-  const base = API_BASE;
-  if (!path) return base;
-  const normalized = path.startsWith("/") ? path : `/${path}`;
-  return base ? `${base}${normalized}` : normalized;
-};
-
-const dedupeThreads = (threads = []) => {
-  const seen = new Set();
-  return threads.filter((thread) => {
-    const key = thread?.id ?? thread?.code ?? thread?.timestamp;
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-};
-
-const parseThreadList = (value) => (Array.isArray(value) ? value : []);
-
-const friendlyError = (code) => {
-  const normalized = String(code || "").toLowerCase();
-  if (normalized.includes("media_too_large")) return "File is too large (max 15MB).";
-  if (normalized.includes("invalid_file_type")) return "Only images, video, or audio files are allowed.";
-  if (normalized.includes("title_required") || normalized.includes("text_required")) {
-    return "Message is required.";
-  }
-  if (normalized.includes("too_many_requests")) return "You're posting too quickly. Please slow down.";
-  if (normalized.includes("failed to fetch")) return "Network error. Check your connection and try again.";
-  return "Could not post. Please try again.";
-};
+import { useEffect } from "react";
 
 export default function HomePage() {
-  const [text, setText] = useState("");
-  const [file, setFile] = useState(null);
-  const [nsfw, setNsfw] = useState(false);
-  const [formState, setFormState] = useState({ state: "idle", message: "" });
-  const [latest, setLatest] = useState([]);
-  const [top, setTop] = useState([]);
-  const [loadingLists, setLoadingLists] = useState(true);
+  useEffect(() => {
+    document.body.dataset.page = "home";
 
-  const charsLeft = useMemo(() => 500 - (text?.length || 0), [text]);
+    const panel = document.getElementById("live-chat-panel");
+    const headerToggle = document.querySelector(".chat-header-toggle");
 
-  const fetchThreadLists = useCallback(async () => {
-    const [latestRes, topRes] = await Promise.all([
-      fetch(apiPath("/threads")),
-      fetch(apiPath("/threads/most-viewed")),
-    ]);
+    const previousPanelDisplay = panel?.style.display ?? "";
+    const previousPanelAria = panel?.getAttribute("aria-hidden");
+    const previousHeaderExpanded = headerToggle?.getAttribute("aria-expanded");
 
-    const latestJson = latestRes.ok ? await latestRes.json() : [];
-    const topJson = topRes.ok ? await topRes.json() : [];
+    if (panel) {
+      panel.style.display = "flex";
+      panel.setAttribute("aria-hidden", "false");
+    }
+    headerToggle?.setAttribute("aria-expanded", "true");
 
-    return {
-      latest: parseThreadList(latestJson),
-      top: parseThreadList(topJson),
+    return () => {
+      delete document.body.dataset.page;
+
+      if (panel) {
+        panel.style.display = previousPanelDisplay;
+        if (previousPanelAria === null) {
+          panel.removeAttribute("aria-hidden");
+        } else {
+          panel.setAttribute("aria-hidden", previousPanelAria);
+        }
+      }
+
+      if (headerToggle) {
+        if (previousHeaderExpanded === null) {
+          headerToggle.removeAttribute("aria-expanded");
+        } else {
+          headerToggle.setAttribute("aria-expanded", previousHeaderExpanded);
+        }
+      }
     };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const { latest: latestThreads, top: topThreads } = await fetchThreadLists();
-        if (!cancelled) {
-          setLatest(latestThreads);
-          setTop(topThreads);
-        }
-      } catch (_err) {
-        if (!cancelled) {
-          setLatest([]);
-          setTop([]);
-        }
-      } finally {
-        if (!cancelled) setLoadingLists(false);
-      }
-    };
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchThreadLists]);
-
-  const handleSubmit = useCallback(
-    async (event) => {
-      event.preventDefault();
-      if (!text.trim()) {
-        setFormState({ state: "error", message: "Message is required." });
-        return;
-      }
-
-      const payload = new FormData();
-      payload.append("text", text.slice(0, 500));
-      if (file) payload.append("image", file);
-      if (nsfw) payload.append("sensitive", "on");
-
-      setFormState({ state: "loading", message: "Posting..." });
-      try {
-        const response = await fetch(apiPath("/threads"), {
-          method: "POST",
-          body: payload,
-        });
-        const responseJson = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(responseJson?.error || "failed");
-
-        setText("");
-        setFile(null);
-        setNsfw(false);
-
-        const createdThread =
-          responseJson && typeof responseJson === "object" ? responseJson : null;
-        if (createdThread?.id) {
-          setLatest((prev) => dedupeThreads([createdThread, ...parseThreadList(prev)]));
-          setTop((prev) => dedupeThreads([createdThread, ...parseThreadList(prev)]));
-        }
-
-        setFormState({ state: "success", message: "Posted! Updating feed..." });
-
-        try {
-          const { latest: latestThreads, top: topThreads } = await fetchThreadLists();
-          setLatest(latestThreads);
-          setTop(topThreads);
-          setFormState({ state: "success", message: "Posted!" });
-        } catch (_err) {
-          setFormState({
-            state: "success",
-            message: "Posted! Feed will sync when the network returns.",
-          });
-        }
-
-        setTimeout(() => setFormState({ state: "idle", message: "" }), 2500);
-      } catch (err) {
-        setFormState({
-          state: "error",
-          message: friendlyError(err?.message),
-        });
-      }
-    },
-    [file, fetchThreadLists, nsfw, text]
-  );
 
   return (
     <>
@@ -175,115 +72,11 @@ export default function HomePage() {
         </a>
       </nav>
 
-      <header className="header">
+      <header className="header home-header">
         <img src="/favicon.png" alt="Lurk Logo" className="logo" />
         <h1>Lurk</h1>
-        <p className="tagline">A lightweight, fast, open video board.</p>
+        <p className="tagline">Live, anonymous video and text chat in seconds.</p>
       </header>
-
-      <main>
-        <section className="glass-card">
-          <h2 className="home-section-title">Create a New Thread</h2>
-          <form id="thread-form" className="new-thread-form" onSubmit={handleSubmit}>
-            <label htmlFor="thread-text">Write something short:</label>
-            <textarea
-              id="thread-text"
-              name="text"
-              maxLength={500}
-              placeholder="Share a moment, an idea, or a thought..."
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
-            <div className="new-thread-helper" aria-live="polite" aria-atomic="true">
-              {charsLeft} characters left
-            </div>
-
-            <label htmlFor="thread-media">Add Media (optional):</label>
-            <input
-              id="thread-media"
-              type="file"
-              accept="image/*,video/*,audio/*"
-              name="image"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-            />
-
-            <div className="nsfw-row">
-              <button
-                type="button"
-                id="nsfw-toggle"
-                className={`nsfw-toggle ${nsfw ? "is-on" : ""}`}
-                aria-pressed={nsfw}
-                onClick={() => setNsfw((prev) => !prev)}
-              >
-                NSFW: {nsfw ? "On" : "Off"}
-              </button>
-            </div>
-
-            <button type="submit" disabled={formState.state === "loading"}>
-              {formState.state === "loading" ? "Posting..." : "Post"}
-            </button>
-            {formState.message ? (
-              <p
-                className={`form-status ${
-                  formState.state === "error" ? "form-status-error" : "form-status-success"
-                }`}
-              >
-                {formState.message}
-              </p>
-            ) : null}
-          </form>
-        </section>
-
-        <section className="glass-card">
-          <h2 className="home-section-title">Most Viewed</h2>
-          {loadingLists ? (
-            <p>Loading top threads...</p>
-          ) : top.length ? (
-            <div id="threads" style={{ display: "grid", gap: "16px" }}>
-              {top.map((thread) => (
-                <article key={thread.id} className="thread-card">
-                  <div className="thread-card-meta">
-                    <span>{thread.code}</span>
-                    <time>{thread.timestamp}</time>
-                  </div>
-                  <h3 className="thread-card-title">{thread.title || thread.body}</h3>
-                  <div className="thread-card-stats">
-                    <span>{thread.views} views</span>
-                    <span>{Object.keys(thread.reactions || {}).length} reactions</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <p>No threads yet.</p>
-          )}
-        </section>
-
-        <section className="glass-card">
-          <h2 className="home-section-title">Latest Threads</h2>
-          {loadingLists ? (
-            <p>Loading the latest threads...</p>
-          ) : latest.length ? (
-            <div id="threads" style={{ display: "grid", gap: "16px" }}>
-              {latest.map((thread) => (
-                <article key={thread.id} className="thread-card">
-                  <div className="thread-card-meta">
-                    <span>{thread.code}</span>
-                    <time>{thread.timestamp}</time>
-                  </div>
-                  <h3 className="thread-card-title">{thread.title || thread.body}</h3>
-                  <div className="thread-card-stats">
-                    <span>{thread.views} views</span>
-                    <span>{Object.keys(thread.reactions || {}).length} reactions</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <p>No threads yet.</p>
-          )}
-        </section>
-      </main>
     </>
   );
 }

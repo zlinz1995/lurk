@@ -7,7 +7,7 @@ export default function ChatShell() {
     const bubble = document.getElementById("live-chat-bubble");
     const panel = document.getElementById("live-chat-panel");
     const headerToggle = document.querySelector(".chat-header-toggle");
-    if (!bubble || !panel) return;
+    if (!panel) return;
 
     const showPanel = () => {
       panel.style.display = "flex";
@@ -28,7 +28,7 @@ export default function ChatShell() {
       }
     };
 
-    bubble.addEventListener("click", toggle);
+    bubble?.addEventListener("click", toggle);
     headerToggle?.addEventListener("click", toggle);
 
     // Ensure chat runtime script is present (idempotent)
@@ -42,7 +42,7 @@ export default function ChatShell() {
     }
 
     return () => {
-      bubble.removeEventListener("click", toggle);
+      bubble?.removeEventListener("click", toggle);
       headerToggle?.removeEventListener("click", toggle);
     };
   }, []);

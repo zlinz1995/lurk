@@ -18,24 +18,42 @@
   ];
   const defaultName = createRandomName();
   window.__lurkDisplayName = window.__lurkDisplayName || defaultName;
+  const initialPrivateCode = getRoomCodeFromUrl("room");
+  const initialPublicName = getRoomCodeFromUrl("public");
+  if (initialPrivateCode) {
+    setRoomState(initialPrivateCode, {
+      visibility: "private",
+      updateUrl: false,
+      announce: false,
+    });
+  } else if (initialPublicName) {
+    setRoomState(initialPublicName, {
+      visibility: "public",
+      updateUrl: false,
+      announce: false,
+    });
+  } else {
+    setRoomState("", { visibility: "public", updateUrl: false, announce: false });
+  }
 
   onReady(() => {
+    setupRoomControls();
     ensureSocketClient()
-      .then((ioLib) => {
-        if (!ioLib) {
+      .then((ioLib) => connectSocket(ioLib))
+      .then((socket) => {
+        if (!socket) {
           console.warn("Socket.io client unavailable");
-          wireDisplayNameSync(defaultName);
-          setupVideoChat(null, defaultName);
-          return;
         }
-        const socket = ioLib(API_BASE || undefined, socketOptions);
         wireDisplayNameSync(defaultName);
+        setupPublicRoomList(socket);
         setupTextChat(socket, defaultName);
         setupVideoChat(socket, defaultName);
       })
       .catch((err) => {
         console.error("Live chat bootstrap failed:", err);
         wireDisplayNameSync(defaultName);
+        setupPublicRoomList(null);
+        setupTextChat(null, defaultName);
         setupVideoChat(null, defaultName);
       });
   });
@@ -75,6 +93,59 @@
     });
   }
 
+  function connectSocket(ioLib) {
+    if (!ioLib) return Promise.resolve(null);
+    const candidates = [];
+    if (API_BASE) candidates.push(API_BASE);
+    const origin =
+      window.location && window.location.origin ? window.location.origin : "";
+    if (origin && !candidates.includes(origin)) {
+      candidates.push(origin);
+    }
+    const pageHost = window.location?.hostname || "";
+    if (!API_BASE && isLocalHost(pageHost)) {
+      const localDefaults = ["http://localhost:4000", "http://127.0.0.1:4000"];
+      localDefaults.forEach((candidate) => {
+        if (!candidates.includes(candidate)) {
+          candidates.push(candidate);
+        }
+      });
+    }
+
+    return new Promise((resolve) => {
+      let attemptIndex = 0;
+      const tryConnect = () => {
+        if (attemptIndex >= candidates.length) {
+          resolve(null);
+          return;
+        }
+        const base = candidates[attemptIndex++];
+        const socket = ioLib(base === origin ? undefined : base, socketOptions);
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          socket.disconnect();
+          tryConnect();
+        }, 2500);
+        socket.on("connect", () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(socket);
+        });
+        socket.on("connect_error", () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          socket.disconnect();
+          tryConnect();
+        });
+      };
+      tryConnect();
+    });
+  }
+
   function wireDisplayNameSync(defaultName) {
     const input = document.getElementById("chat-video-name");
     if (!input) return;
@@ -99,29 +170,291 @@
     });
   }
 
+  function setupRoomControls() {
+    if (window.__lurkRoomControlsReady) return;
+    window.__lurkRoomControlsReady = true;
+    const publicInput = document.getElementById("chat-public-room");
+    const publicJoinBtn = document.getElementById("chat-public-join");
+    const publicLobbyBtn = document.getElementById("chat-public-lobby");
+    const privateInput = document.getElementById("chat-room-code");
+    const privateJoinBtn = document.getElementById("chat-room-join");
+    const createBtn = document.getElementById("chat-room-create");
+    const copyBtn = document.getElementById("chat-room-copy");
+    const status = document.getElementById("chat-room-status");
+    if (
+      !publicInput ||
+      !publicJoinBtn ||
+      !publicLobbyBtn ||
+      !privateInput ||
+      !privateJoinBtn ||
+      !createBtn ||
+      !copyBtn ||
+      !status
+    ) {
+      return;
+    }
+
+    let resetTimer = null;
+    const updateUi = (code, visibility) => {
+      const roomVisibility = visibility || window.__lurkRoomVisibility || "public";
+      const normalized =
+        roomVisibility === "private"
+          ? normalizePrivateCode(code)
+          : normalizePublicName(code);
+      publicInput.value = roomVisibility === "public" ? normalized : "";
+      privateInput.value = roomVisibility === "private" ? normalized : "";
+      if (roomVisibility === "private" && normalized) {
+        status.textContent = `Private room: ${normalized}`;
+      } else if (normalized) {
+        status.textContent = `Public room: ${normalized}`;
+      } else {
+        status.textContent = "Public lobby";
+      }
+      copyBtn.disabled = roomVisibility !== "private" || !normalized;
+      status.dataset.baseText = status.textContent;
+    };
+
+    const flashStatus = (message) => {
+      status.textContent = message;
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => {
+        status.textContent = status.dataset.baseText || message;
+      }, 2200);
+    };
+
+    const applyRoom = (code, visibility, { updateUrl = true } = {}) => {
+      const normalized =
+        visibility === "private"
+          ? normalizePrivateCode(code)
+          : normalizePublicName(code);
+      setRoomState(normalized, { visibility, updateUrl, announce: true });
+      updateUi(normalized, visibility);
+      if (visibility === "private") {
+        flashStatus(`Private room selected: ${normalized}.`);
+      } else if (normalized) {
+        flashStatus(`Public room selected: ${normalized}.`);
+      } else {
+        flashStatus("Public lobby selected.");
+      }
+    };
+
+    updateUi(window.__lurkRoomCode || "", window.__lurkRoomVisibility);
+
+    publicJoinBtn.addEventListener("click", () => applyRoom(publicInput.value, "public"));
+    publicLobbyBtn.addEventListener("click", () => applyRoom("", "public"));
+
+    privateJoinBtn.addEventListener("click", () => {
+      const normalized = normalizePrivateCode(privateInput.value);
+      if (!normalized) {
+        flashStatus("Enter a private invite code to join.");
+        return;
+      }
+      applyRoom(normalized, "private");
+    });
+    createBtn.addEventListener("click", () => {
+      const code = generateRoomCode();
+      applyRoom(code, "private");
+    });
+    copyBtn.addEventListener("click", async () => {
+      const code = window.__lurkRoomCode || "";
+      if (!code || window.__lurkRoomVisibility !== "private") return;
+      const link = buildInviteLink(code, "private");
+      try {
+        await navigator.clipboard.writeText(link);
+        status.textContent = "Invite link copied.";
+      } catch {
+        status.textContent = "Copy failed. You can share the URL.";
+      }
+    });
+    publicInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        applyRoom(publicInput.value, "public");
+      }
+    });
+    privateInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const normalized = normalizePrivateCode(privateInput.value);
+        if (!normalized) {
+          flashStatus("Enter a private invite code to join.");
+          return;
+        }
+        applyRoom(normalized, "private");
+      }
+    });
+
+    window.addEventListener("lurk-room-change", (event) => {
+      updateUi(event?.detail?.code || "", event?.detail?.visibility);
+    });
+
+    window.__lurkJoinPublicRoom = (name) => applyRoom(name, "public");
+    window.__lurkJoinPublicLobby = () => applyRoom("", "public");
+  }
+
+  function setupPublicRoomList(socket) {
+    const container = document.getElementById("chat-public-rooms");
+    if (!container) return;
+
+    let lastRooms = [];
+    const renderRooms = (rooms = []) => {
+      lastRooms = rooms;
+      container.innerHTML = "";
+      const activeName =
+        window.__lurkRoomVisibility === "public" ? window.__lurkRoomCode || "" : "";
+      const withLobby = rooms.some((room) => room.name === "LOBBY")
+        ? rooms
+        : [{ name: "LOBBY", count: 0 }, ...rooms];
+      if (!withLobby.length) {
+        const empty = document.createElement("span");
+        empty.className = "chat-public-room-empty";
+        empty.textContent = "No public rooms yet.";
+        container.appendChild(empty);
+        return;
+      }
+      withLobby.forEach((room) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "chat-public-room-pill";
+        const name = room?.name || "LOBBY";
+        button.textContent = `${name} (${room?.count ?? 0})`;
+        if (name === activeName || (!activeName && name === "LOBBY")) {
+          button.classList.add("is-active");
+        }
+        button.addEventListener("click", () => {
+          if (name === "LOBBY") {
+            window.__lurkJoinPublicLobby?.();
+          } else {
+            window.__lurkJoinPublicRoom?.(name);
+          }
+        });
+        container.appendChild(button);
+      });
+    };
+
+    renderRooms([]);
+
+    if (!socket || typeof socket.on !== "function") return;
+    socket.on("public-rooms", (rooms = []) => {
+      const sanitized = Array.isArray(rooms)
+        ? rooms
+            .map((room) => ({
+              name: normalizePublicName(room?.name || ""),
+              count: Number.isFinite(room?.count) ? room.count : 0,
+            }))
+            .filter((room) => room.name)
+        : [];
+      renderRooms(sanitized);
+    });
+
+    window.addEventListener("lurk-room-change", () => {
+      if (lastRooms.length) {
+        renderRooms(lastRooms);
+      }
+    });
+  }
+
   function setupTextChat(socket, defaultName) {
     const form = document.getElementById("live-chat-form");
     const input = document.getElementById("live-chat-input");
     const messages = document.getElementById("live-chat-messages");
     if (!form || !input || !messages) return;
 
+    const getCurrentRoom = () => getRoomIds().chatId;
+
+    const channel =
+      typeof BroadcastChannel !== "undefined"
+        ? new BroadcastChannel("lurk-live-chat")
+        : null;
+    const broadcastMessage = (payload) => {
+      if (!channel) return;
+      try {
+        channel.postMessage(payload);
+      } catch {
+        // Ignore cross-tab failures silently.
+      }
+    };
+
+    const updateLogVisibility = () => {
+      messages.toggleAttribute("hidden", messages.childElementCount === 0);
+    };
+
+    const seenIds = new Set();
+    const rememberId = (id) => {
+      if (!id) return false;
+      if (seenIds.has(id)) return false;
+      seenIds.add(id);
+      if (seenIds.size > 500) {
+        const trimmed = Array.from(seenIds).slice(-350);
+        seenIds.clear();
+        trimmed.forEach((item) => seenIds.add(item));
+      }
+      return true;
+    };
+
+    const deliverMessage = (payload) => {
+      const roomId = payload && typeof payload === "object" ? payload.roomId : null;
+      if (roomId && roomId !== getCurrentRoom()) return;
+      const id = payload && typeof payload === "object" ? payload.id : null;
+      if (id && !rememberId(id)) return;
+      appendChatMessage(payload, messages, defaultName);
+      updateLogVisibility();
+    };
+
+    if (channel) {
+      channel.addEventListener("message", (event) => {
+        if (!event || !event.data) return;
+        deliverMessage(event.data);
+      });
+    }
+
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const text = (input.value || "").trim();
       if (!text) return;
+      const socketId = socket && socket.id ? socket.id : defaultName;
+      const roomId = getCurrentRoom();
       const payload = {
-        id: `${socket.id || defaultName}-${Date.now()}`,
+        id: `${socketId}-${Date.now()}`,
         text,
         name: window.__lurkDisplayName || defaultName,
         ts: Date.now(),
+        roomId,
       };
-      socket.emit("chat message", payload);
+      deliverMessage(payload);
+      if (socket && typeof socket.emit === "function") {
+        socket.emit("chat message", payload);
+      }
+      broadcastMessage(payload);
       input.value = "";
     });
 
-    socket.on("chat message", (payload) =>
-      appendChatMessage(payload, messages, defaultName)
-    );
+    if (socket && typeof socket.on === "function") {
+      socket.on("chat message", (payload) => {
+        deliverMessage(payload);
+        broadcastMessage(payload);
+      });
+    }
+
+    updateLogVisibility();
+
+    const joinChatRoom = () => {
+      if (socket && typeof socket.emit === "function") {
+        socket.emit("join-chat-room", { roomId: getCurrentRoom() });
+      }
+    };
+    joinChatRoom();
+    if (socket && typeof socket.on === "function") {
+      socket.on("connect", joinChatRoom);
+    }
+
+    window.addEventListener("lurk-room-change", () => {
+      if (messages) {
+        messages.innerHTML = "";
+        updateLogVisibility();
+      }
+      joinChatRoom();
+    });
   }
 
   function appendChatMessage(payload, target, defaultName) {
@@ -130,13 +463,24 @@
       typeof payload === "string" ? { text: payload } : payload || {};
     if (!data.text) return;
 
+    const displayName = data.name || defaultName;
+    const lastRow = target.lastElementChild;
+    const lastSender = lastRow ? lastRow.dataset.sender : null;
+    const isContinuation = lastSender === displayName;
+
     const row = document.createElement("div");
     row.className = "chat-message-row";
+    row.dataset.sender = displayName;
 
-    const userLabel = document.createElement("span");
-    userLabel.className = "chat-message-user";
-    userLabel.textContent = data.name || defaultName;
-    row.appendChild(userLabel);
+    if (isContinuation) {
+      row.classList.add("is-continuation");
+    } else {
+      row.classList.add("is-group-start");
+      const userLabel = document.createElement("span");
+      userLabel.className = "chat-message-user";
+      userLabel.textContent = displayName;
+      row.appendChild(userLabel);
+    }
 
     const bubble = document.createElement("div");
     bubble.className = "chat-message-bubble";
@@ -149,6 +493,7 @@
     row.appendChild(timeLabel);
 
     target.appendChild(row);
+    target.hidden = false;
     target.scrollTop = target.scrollHeight;
 
     while (target.children.length > 200) {
@@ -167,6 +512,7 @@
     const activityLog = document.getElementById("chat-video-log");
     const participantList = document.getElementById("chat-video-participant-list");
     const participantCount = document.getElementById("chat-video-participant-count");
+    const roomStatus = document.getElementById("chat-room-status");
 
     if (!startBtn || !stopBtn || !localVideo) return;
 
@@ -249,6 +595,7 @@
     };
 
     const getName = () => window.__lurkDisplayName || defaultName;
+    const getCurrentRoom = () => getRoomIds().videoId;
 
     const updateSelfParticipant = () => {
       upsertParticipant("self", {
@@ -264,7 +611,8 @@
     const updateRemotePlaceholder = () => {
       if (!remotePlaceholder) return;
       const hasRemotes = remoteGrid && remoteGrid.children.length > 0;
-      remotePlaceholder.style.display = hasRemotes ? "none" : "flex";
+      remotePlaceholder.classList.toggle("is-hidden", hasRemotes);
+      remotePlaceholder.setAttribute("aria-hidden", hasRemotes ? "true" : "false");
     };
 
     const setJoinState = (state) => {
@@ -334,11 +682,21 @@
     };
 
     if (!socket) {
+      let statusTimer = null;
+      const flashStatus = (message) => {
+        if (!roomStatus) return;
+        const base = roomStatus.dataset.baseText || roomStatus.textContent;
+        roomStatus.textContent = message;
+        if (statusTimer) clearTimeout(statusTimer);
+        statusTimer = setTimeout(() => {
+          roomStatus.textContent = roomStatus.dataset.baseText || base;
+        }, 2400);
+      };
       const offlineNotice = () =>
-        log("Live video is offline right now. Please try again later.");
+        flashStatus("Live video is offline. Start the backend service.");
       startBtn.addEventListener("click", offlineNotice);
       stopBtn.addEventListener("click", () => {
-        log("You're not in a video room.");
+        flashStatus("You're not in a video room.");
       });
       return;
     }
@@ -416,16 +774,18 @@
       }
       applyLocalMediaState({ hasVideo, hasAudio, idle: false });
 
+      const roomInfo = describeRoom();
       if (!hasVideo && hasAudio) {
         log("Camera not found. You're sharing audio only.");
       } else if (!hasAudio && !hasVideo) {
         log("No microphone or camera detected. Joining in listen-only mode.");
       } else {
-        log("Media connected. Connecting you to the room...");
+        log("Media connected.");
       }
+      log(`Connecting you to the ${roomInfo.label}...`);
 
       socket.emit("join-video-room", {
-        roomId: "global-video-room",
+        roomId: getCurrentRoom(),
         name: getName(),
       });
 
@@ -435,7 +795,11 @@
       updateSelfParticipant();
 
       if (hasAudio || hasVideo) {
-        log("You're live. Share the page or bubble to invite others.");
+        if (roomInfo.visibility === "private" && roomInfo.code) {
+          log("You're live. Share the invite link to add others.");
+        } else {
+          log("You're live. Share the page or room name to invite others.");
+        }
       } else {
         log("You're listening. Enable a mic if you want to speak.");
       }
@@ -445,6 +809,12 @@
     socket.on("disconnect", leaveRoom);
     window.addEventListener("beforeunload", leaveRoom);
     window.addEventListener("lurk-livechat-close", leaveRoom);
+    window.addEventListener("lurk-room-change", (event) => {
+      if (!joined) return;
+      leaveRoom();
+      const info = describeRoom(event?.detail);
+      log(`Room changed. Join again to enter the ${info.label}.`);
+    });
 
     socket.on("video-existing-peers", (existing = []) => {
       if (!joined || !localStream) return;
@@ -666,6 +1036,152 @@
       hostname === "[::1]" ||
       hostname.endsWith(".local")
     );
+  }
+
+  function normalizePrivateCode(value) {
+    if (!value) return "";
+    return String(value)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 12);
+  }
+
+  function normalizePublicName(value) {
+    if (!value) return "";
+    return String(value)
+      .toUpperCase()
+      .replace(/[^A-Z0-9\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .slice(0, 24);
+  }
+
+  function getRoomCodeFromUrl(paramName) {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (paramName === "public") {
+        return normalizePublicName(params.get("public") || "");
+      }
+      return normalizePrivateCode(params.get("room") || "");
+    } catch {
+      return "";
+    }
+  }
+
+  function buildRoomIds(code = "", visibility = "public") {
+    const normalized =
+      visibility === "private" ? normalizePrivateCode(code) : normalizePublicName(code);
+    const baseId =
+      visibility === "private"
+        ? `private-${normalized}`
+        : `public-${normalized || "lobby"}`;
+    return {
+      baseId,
+      chatId: `chat-${baseId}`,
+      videoId: `video-${baseId}`,
+    };
+  }
+
+  function getRoomIds() {
+    return buildRoomIds(
+      window.__lurkRoomCode || "",
+      window.__lurkRoomVisibility || "public"
+    );
+  }
+
+  function updateRoomUrl(code, visibility) {
+    try {
+      const url = new URL(window.location.href);
+      if (visibility === "private") {
+        if (code) {
+          url.searchParams.set("room", normalizePrivateCode(code));
+        } else {
+          url.searchParams.delete("room");
+        }
+        url.searchParams.delete("public");
+      } else {
+        if (code) {
+          url.searchParams.set("public", normalizePublicName(code));
+        } else {
+          url.searchParams.delete("public");
+        }
+        url.searchParams.delete("room");
+      }
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      // Ignore URL updates.
+    }
+  }
+
+  function setRoomState(
+    code,
+    { visibility = window.__lurkRoomVisibility || "public", updateUrl = true, announce = true } = {}
+  ) {
+    const normalized =
+      visibility === "private" ? normalizePrivateCode(code) : normalizePublicName(code);
+    window.__lurkRoomVisibility = visibility;
+    window.__lurkRoomCode = normalized;
+    const ids = buildRoomIds(normalized, visibility);
+    window.__lurkRoomBaseId = ids.baseId;
+    if (updateUrl) updateRoomUrl(normalized, visibility);
+    if (announce) {
+      window.dispatchEvent(
+        new CustomEvent("lurk-room-change", {
+          detail: { code: normalized, visibility, ...ids },
+        })
+      );
+    }
+  }
+
+  function buildInviteLink(code, visibility) {
+    try {
+      const url = new URL(window.location.href);
+      if (visibility === "private") {
+        if (code) {
+          url.searchParams.set("room", normalizePrivateCode(code));
+        } else {
+          url.searchParams.delete("room");
+        }
+        url.searchParams.delete("public");
+      } else {
+        if (code) {
+          url.searchParams.set("public", normalizePublicName(code));
+        } else {
+          url.searchParams.delete("public");
+        }
+        url.searchParams.delete("room");
+      }
+      return url.toString();
+    } catch {
+      return window.location.href;
+    }
+  }
+
+  function describeRoom(detail) {
+    const visibility =
+      detail?.visibility || window.__lurkRoomVisibility || "public";
+    const code = detail?.code ?? window.__lurkRoomCode ?? "";
+    if (visibility === "private" && code) {
+      return { visibility, code, label: `private room ${code}` };
+    }
+    if (code) {
+      return { visibility, code, label: `public room ${code}` };
+    }
+    return { visibility, code: "", label: "public lobby" };
+  }
+
+  function generateRoomCode(length = 6) {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const values = new Uint8Array(length);
+    if (window.crypto && window.crypto.getRandomValues) {
+      window.crypto.getRandomValues(values);
+    } else {
+      for (let i = 0; i < length; i += 1) {
+        values[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
   }
 
   function sanitizeName(value) {
