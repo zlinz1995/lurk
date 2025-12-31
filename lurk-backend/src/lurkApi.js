@@ -316,7 +316,7 @@ function setupSockets(server) {
   };
 
   io.on("connection", (socket) => {
-    joinChatRoom(socket, socket.data?.chatRoomId);
+    joinChatRoom(socket, socket.data?.chatRoomId, { emitHistory: true });
     emitPublicRooms();
 
     socket.on("join-chat-room", ({ roomId } = {}) => {

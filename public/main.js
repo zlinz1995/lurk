@@ -44,6 +44,7 @@
 
   onReady(() => {
     setupRoomControls();
+    setupTextChat(null, defaultName);
     ensureSocketClient()
       .then((ioLib) => connectSocket(ioLib))
       .then((socket) => {
@@ -427,6 +428,13 @@
   }
 
   function setupTextChat(socket, defaultName) {
+    const existingState = window.__lurkTextChatState;
+    if (existingState) {
+      if (socket) {
+        existingState.setSocket(socket);
+      }
+      return;
+    }
     const form = document.getElementById("live-chat-form");
     const input = document.getElementById("live-chat-input");
     const messages = document.getElementById("live-chat-messages");
@@ -434,6 +442,16 @@
     const stickers = document.getElementById("live-chat-stickers");
     if (!form || !input || !messages) return;
 
+    const state = {
+      socket,
+      boundSocket: null,
+      defaultName,
+      pendingPayloads: [],
+      setSocket: null,
+    };
+    window.__lurkTextChatState = state;
+
+    const getSocket = () => state.socket;
     const getCurrentRoom = () => getRoomIds().chatId;
 
     const channel =
@@ -471,18 +489,20 @@
       if (roomId && roomId !== getCurrentRoom()) return false;
       const id = payload && typeof payload === "object" ? payload.id : null;
       if (id && !rememberId(id)) return false;
-      const delivered = appendChatMessage(payload, messages, defaultName);
+      const delivered = appendChatMessage(payload, messages, state.defaultName);
       if (!delivered) return false;
       updateLogVisibility();
       return true;
     };
     const buildPayload = ({ text = "", sticker = "" } = {}) => {
-      const socketId = socket && socket.id ? socket.id : defaultName;
+      const activeSocket = getSocket();
+      const socketId =
+        activeSocket && activeSocket.id ? activeSocket.id : state.defaultName;
       const roomId = getCurrentRoom();
       const idSuffix = Math.random().toString(36).slice(2, 7);
       const payload = {
         id: `${socketId}-${Date.now()}-${idSuffix}`,
-        name: window.__lurkDisplayName || defaultName,
+        name: window.__lurkDisplayName || state.defaultName,
         ts: Date.now(),
         roomId,
       };
@@ -493,8 +513,11 @@
     const sendPayload = (payload) => {
       if (!payload) return;
       if (!deliverMessage(payload)) return;
-      if (socket && typeof socket.emit === "function") {
-        socket.emit("chat message", payload);
+      const activeSocket = getSocket();
+      if (activeSocket && typeof activeSocket.emit === "function" && activeSocket.connected) {
+        activeSocket.emit("chat message", payload);
+      } else {
+        state.pendingPayloads.push(payload);
       }
       broadcastMessage(payload);
     };
@@ -549,27 +572,51 @@
       input.value = "";
     });
 
-    if (socket && typeof socket.on === "function") {
-      socket.on("chat history", (items = []) => {
+    updateLogVisibility();
+
+    function joinChatRoom() {
+      const activeSocket = getSocket();
+      if (activeSocket && typeof activeSocket.emit === "function") {
+        activeSocket.emit("join-chat-room", { roomId: getCurrentRoom() });
+      }
+    }
+
+    function flushPendingPayloads() {
+      const activeSocket = getSocket();
+      if (!activeSocket || typeof activeSocket.emit !== "function") return;
+      if (!activeSocket.connected) return;
+      while (state.pendingPayloads.length) {
+        const payload = state.pendingPayloads.shift();
+        activeSocket.emit("chat message", payload);
+      }
+    }
+
+    const attachSocketHandlers = (nextSocket) => {
+      if (!nextSocket || typeof nextSocket.on !== "function") return;
+      if (state.boundSocket === nextSocket) return;
+      state.boundSocket = nextSocket;
+      nextSocket.on("chat history", (items = []) => {
         ingestHistory(items);
       });
-      socket.on("chat message", (payload) => {
+      nextSocket.on("chat message", (payload) => {
         deliverMessage(payload);
         broadcastMessage(payload);
       });
-    }
-
-    updateLogVisibility();
-
-    const joinChatRoom = () => {
-      if (socket && typeof socket.emit === "function") {
-        socket.emit("join-chat-room", { roomId: getCurrentRoom() });
-      }
+      nextSocket.on("connect", () => {
+        joinChatRoom();
+        flushPendingPayloads();
+      });
     };
+
+    state.setSocket = (nextSocket) => {
+      state.socket = nextSocket;
+      attachSocketHandlers(nextSocket);
+      joinChatRoom();
+      flushPendingPayloads();
+    };
+
+    attachSocketHandlers(state.socket);
     joinChatRoom();
-    if (socket && typeof socket.on === "function") {
-      socket.on("connect", joinChatRoom);
-    }
 
     window.addEventListener("lurk-room-change", () => {
       if (messages) {
