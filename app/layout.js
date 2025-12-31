@@ -69,45 +69,31 @@ export default function RootLayout({ children }) {
             />
             <div className="chat-room-controls" aria-label="Room controls">
               <div className="chat-room-block">
-                <label htmlFor="chat-public-room" className="chat-room-label">
-                  Public room
+                <label htmlFor="chat-room-entry" className="chat-room-label">
+                  Room name or invite code
                 </label>
-                <div className="chat-room-row">
-                  <input
-                    id="chat-public-room"
-                    type="text"
-                    className="chat-room-input"
-                    maxLength={24}
-                    placeholder="Lobby"
-                    autoComplete="off"
-                  />
-                  <button type="button" id="chat-public-join" className="chat-room-button">
-                    Join public
-                  </button>
-                  <button type="button" id="chat-public-lobby" className="chat-room-button">
-                    Public lobby
-                  </button>
-                </div>
-                <div className="chat-room-list">
-                  <span className="chat-room-list-label">Active public rooms</span>
-                  <div id="chat-public-rooms" className="chat-public-rooms"></div>
-                </div>
-              </div>
-              <div className="chat-room-block">
-                <label htmlFor="chat-room-code" className="chat-room-label">
-                  Private room
-                </label>
-                <div className="chat-room-row">
-                  <input
-                    id="chat-room-code"
-                    type="text"
-                    className="chat-room-input"
-                    maxLength={12}
-                    placeholder="Enter code"
-                    autoComplete="off"
-                  />
-                  <button type="button" id="chat-room-join" className="chat-room-button">
-                    Join room
+                <div className="chat-room-row chat-room-row-compact">
+                  <div className="chat-room-input-group">
+                    <input
+                      id="chat-room-entry"
+                      type="text"
+                      className="chat-room-input"
+                      maxLength={24}
+                      placeholder="Lobby"
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      id="chat-room-visibility"
+                      className="chat-room-button chat-room-visibility-toggle"
+                      aria-pressed="false"
+                      aria-label="Room type: Public. Click to switch to private."
+                    >
+                      Public
+                    </button>
+                  </div>
+                  <button type="button" id="chat-room-lobby" className="chat-room-button">
+                    Lobby
                   </button>
                   <button type="button" id="chat-room-create" className="chat-room-button">
                     Create invite
@@ -115,6 +101,13 @@ export default function RootLayout({ children }) {
                   <button type="button" id="chat-room-copy" className="chat-room-button" disabled>
                     Copy link
                   </button>
+                </div>
+                <p id="chat-room-help" className="chat-room-help">
+                  Public rooms show up for everyone. Leave it blank to join the lobby.
+                </p>
+                <div id="chat-public-room-list" className="chat-room-list">
+                  <span className="chat-room-list-label">Active public rooms</span>
+                  <div id="chat-public-rooms" className="chat-public-rooms"></div>
                 </div>
               </div>
               <div id="chat-room-status" className="chat-room-status">

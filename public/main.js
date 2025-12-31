@@ -173,36 +173,73 @@
   function setupRoomControls() {
     if (window.__lurkRoomControlsReady) return;
     window.__lurkRoomControlsReady = true;
-    const publicInput = document.getElementById("chat-public-room");
-    const publicJoinBtn = document.getElementById("chat-public-join");
-    const publicLobbyBtn = document.getElementById("chat-public-lobby");
-    const privateInput = document.getElementById("chat-room-code");
-    const privateJoinBtn = document.getElementById("chat-room-join");
+    const roomInput = document.getElementById("chat-room-entry");
+    const visibilityToggle = document.getElementById("chat-room-visibility");
+    const lobbyBtn = document.getElementById("chat-room-lobby");
     const createBtn = document.getElementById("chat-room-create");
     const copyBtn = document.getElementById("chat-room-copy");
     const status = document.getElementById("chat-room-status");
+    const help = document.getElementById("chat-room-help");
+    const publicList = document.getElementById("chat-public-room-list");
+    const controls = document.querySelector(".chat-room-controls");
     if (
-      !publicInput ||
-      !publicJoinBtn ||
-      !publicLobbyBtn ||
-      !privateInput ||
-      !privateJoinBtn ||
+      !roomInput ||
+      !visibilityToggle ||
+      !lobbyBtn ||
       !createBtn ||
       !copyBtn ||
-      !status
+      !status ||
+      !help
     ) {
       return;
     }
 
     let resetTimer = null;
+    let publicValue = "";
+    let privateValue = "";
+    let currentVisibility = window.__lurkRoomVisibility || "public";
+
+    const setVisibilityUi = (visibility) => {
+      currentVisibility = visibility;
+      const isPrivate = visibility === "private";
+      visibilityToggle.textContent = isPrivate ? "Private" : "Public";
+      visibilityToggle.setAttribute("aria-pressed", isPrivate ? "true" : "false");
+      visibilityToggle.setAttribute(
+        "aria-label",
+        `Room type: ${isPrivate ? "Private" : "Public"}. Click to switch to ${
+          isPrivate ? "public" : "private"
+        }.`
+      );
+      roomInput.placeholder = isPrivate ? "Enter invite code" : "Lobby";
+      roomInput.maxLength = isPrivate ? 12 : 24;
+      lobbyBtn.hidden = isPrivate;
+      createBtn.hidden = !isPrivate;
+      copyBtn.hidden = !isPrivate;
+      if (publicList) {
+        publicList.hidden = isPrivate;
+        publicList.setAttribute("aria-hidden", isPrivate ? "true" : "false");
+      }
+      if (controls) {
+        controls.dataset.visibility = visibility;
+      }
+      help.textContent = isPrivate
+        ? "Private rooms need an invite code. Create one to share with friends."
+        : "Public rooms show up for everyone. Leave it blank to join the lobby.";
+    };
+
     const updateUi = (code, visibility) => {
       const roomVisibility = visibility || window.__lurkRoomVisibility || "public";
       const normalized =
         roomVisibility === "private"
           ? normalizePrivateCode(code)
           : normalizePublicName(code);
-      publicInput.value = roomVisibility === "public" ? normalized : "";
-      privateInput.value = roomVisibility === "private" ? normalized : "";
+      if (roomVisibility === "private") {
+        privateValue = normalized;
+      } else {
+        publicValue = normalized;
+      }
+      setVisibilityUi(roomVisibility);
+      roomInput.value = normalized;
       if (roomVisibility === "private" && normalized) {
         status.textContent = `Private room: ${normalized}`;
       } else if (normalized) {
@@ -212,6 +249,19 @@
       }
       copyBtn.disabled = roomVisibility !== "private" || !normalized;
       status.dataset.baseText = status.textContent;
+    };
+
+    const getSelection = () => {
+      if (currentVisibility === "private") {
+        return {
+          visibility: "private",
+          code: normalizePrivateCode(roomInput.value),
+        };
+      }
+      return {
+        visibility: "public",
+        code: normalizePublicName(roomInput.value),
+      };
     };
 
     const flashStatus = (message) => {
@@ -240,17 +290,36 @@
 
     updateUi(window.__lurkRoomCode || "", window.__lurkRoomVisibility);
 
-    publicJoinBtn.addEventListener("click", () => applyRoom(publicInput.value, "public"));
-    publicLobbyBtn.addEventListener("click", () => applyRoom("", "public"));
-
-    privateJoinBtn.addEventListener("click", () => {
-      const normalized = normalizePrivateCode(privateInput.value);
-      if (!normalized) {
+    const applySelection = ({ updateUrl = true } = {}) => {
+      const selection = getSelection();
+      if (selection.visibility === "private" && !selection.code) {
         flashStatus("Enter a private invite code to join.");
-        return;
+        return false;
       }
-      applyRoom(normalized, "private");
+      const currentCode = window.__lurkRoomCode || "";
+      const currentVis = window.__lurkRoomVisibility || "public";
+      if (selection.visibility === currentVis && selection.code === currentCode) {
+        updateUi(currentCode, currentVis);
+        return true;
+      }
+      applyRoom(selection.code, selection.visibility, { updateUrl });
+      return true;
+    };
+
+    visibilityToggle.addEventListener("click", () => {
+      if (currentVisibility === "private") {
+        privateValue = roomInput.value;
+      } else {
+        publicValue = roomInput.value;
+      }
+      const nextVisibility = currentVisibility === "private" ? "public" : "private";
+      setVisibilityUi(nextVisibility);
+      roomInput.value = nextVisibility === "private" ? privateValue : publicValue;
+      copyBtn.disabled =
+        window.__lurkRoomVisibility !== "private" || !window.__lurkRoomCode;
     });
+
+    lobbyBtn.addEventListener("click", () => applyRoom("", "public"));
     createBtn.addEventListener("click", () => {
       const code = generateRoomCode();
       applyRoom(code, "private");
@@ -266,21 +335,17 @@
         status.textContent = "Copy failed. You can share the URL.";
       }
     });
-    publicInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        applyRoom(publicInput.value, "public");
+    roomInput.addEventListener("input", () => {
+      if (currentVisibility === "private") {
+        privateValue = roomInput.value;
+      } else {
+        publicValue = roomInput.value;
       }
     });
-    privateInput.addEventListener("keydown", (event) => {
+    roomInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        const normalized = normalizePrivateCode(privateInput.value);
-        if (!normalized) {
-          flashStatus("Enter a private invite code to join.");
-          return;
-        }
-        applyRoom(normalized, "private");
+        applySelection();
       }
     });
 
@@ -288,6 +353,7 @@
       updateUi(event?.detail?.code || "", event?.detail?.visibility);
     });
 
+    window.__lurkApplyRoomFromControls = applySelection;
     window.__lurkJoinPublicRoom = (name) => applyRoom(name, "public");
     window.__lurkJoinPublicLobby = () => applyRoom("", "public");
   }
@@ -732,6 +798,10 @@
 
     startBtn.addEventListener("click", async () => {
       if (joined) return;
+      if (typeof window.__lurkApplyRoomFromControls === "function") {
+        const applied = window.__lurkApplyRoomFromControls({ updateUrl: true });
+        if (!applied) return;
+      }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         log("Video chat is not supported in this browser.");
         return;
@@ -992,8 +1062,20 @@
 
   function getApiBase() {
     try {
+      const urlParam = getApiBaseFromUrl();
+      if (urlParam) {
+        try {
+          window.__LURK_API_BASE = urlParam;
+          window.localStorage?.setItem("lurkApiBase", urlParam);
+        } catch {
+          // Ignore storage failures.
+        }
+      }
+      const stored = getApiBaseFromStorage();
       const source =
+        urlParam ||
         window.__LURK_API_BASE ||
+        stored ||
         document.documentElement?.dataset?.apiBase ||
         document.body?.dataset?.apiBase ||
         "";
@@ -1011,6 +1093,26 @@
       }
 
       return trimmed;
+    } catch {
+      return "";
+    }
+  }
+
+  function getApiBaseFromUrl() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const value = params.get("api") || "";
+      if (!value) return "";
+      return value.replace(/\/$/, "");
+    } catch {
+      return "";
+    }
+  }
+
+  function getApiBaseFromStorage() {
+    try {
+      const value = window.localStorage?.getItem("lurkApiBase") || "";
+      return value ? value.replace(/\/$/, "") : "";
     } catch {
       return "";
     }
