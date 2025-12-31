@@ -1,5 +1,5 @@
 // Lurk service worker - caches core assets for offline use
-const CACHE_NAME = 'lurk-v2';
+const CACHE_NAME = 'lurk-v3';
 const ASSETS = [
   '/',
   '/index.html',

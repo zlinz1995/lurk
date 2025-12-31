@@ -718,6 +718,8 @@
     const volumeToggle = document.getElementById("chat-video-toggle-volume");
     const volumeSlider = document.getElementById("chat-video-volume");
     const testMicToggle = document.getElementById("chat-video-test-mic");
+    const ambientLayer = document.getElementById("chat-video-ambient");
+    const ambientVideo = document.getElementById("chat-video-ambient-source");
 
     if (!startBtn || !stopBtn || !localVideo) return;
 
@@ -736,6 +738,47 @@
     let testMicContext = null;
     let testMicSource = null;
     let testMicGain = null;
+    let testMicStream = null;
+    const hasActiveVideo = (stream) =>
+      Boolean(
+        stream &&
+          stream.getVideoTracks().some((track) => track.enabled && track.readyState === "live")
+      );
+    const setAmbientStream = (stream) => {
+      if (!ambientVideo) return;
+      if (!stream || !hasActiveVideo(stream)) {
+        if (typeof ambientVideo.pause === "function") {
+          ambientVideo.pause();
+        }
+        if (ambientVideo.srcObject) {
+          ambientVideo.srcObject = null;
+        }
+        ambientLayer?.classList.remove("is-active");
+        return;
+      }
+      if (ambientVideo.srcObject !== stream) {
+        ambientVideo.srcObject = stream;
+      }
+      const playPromise = ambientVideo.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {});
+      }
+      ambientLayer?.classList.add("is-active");
+    };
+    const refreshAmbient = () => {
+      if (!ambientVideo) return;
+      let selected = null;
+      for (const stream of peerStreams.values()) {
+        if (hasActiveVideo(stream)) {
+          selected = stream;
+          break;
+        }
+      }
+      if (!selected && hasActiveVideo(localStream)) {
+        selected = localStream;
+      }
+      setAmbientStream(selected);
+    };
 
     const describeMediaState = (state = {}) => {
       if (state.idle) return "Not connected";
@@ -981,12 +1024,39 @@
         testMicAudio.pause();
         testMicAudio.srcObject = null;
       }
+      if (testMicStream) {
+        testMicStream.getTracks().forEach((track) => track.stop());
+        testMicStream = null;
+      }
     };
 
-    const startTestMic = () => {
-      if (!localStream) return;
-      const audioTracks = localStream.getAudioTracks();
-      if (!audioTracks.length || audioTracks.every((track) => !track.enabled)) return;
+    const startTestMic = async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      let stream = null;
+      const audioTracks = localStream ? localStream.getAudioTracks() : [];
+      const hasLocalAudio =
+        audioTracks.length > 0 && audioTracks.some((track) => track.enabled);
+      if (hasLocalAudio) {
+        stream = localStream;
+      } else {
+        if (testMicStream) {
+          testMicStream.getTracks().forEach((track) => track.stop());
+        }
+        try {
+          testMicStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+            video: false,
+          });
+          stream = testMicStream;
+        } catch (err) {
+          console.warn("Test mic capture failed:", err);
+          return;
+        }
+      }
       if (!testMicContext) {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (AudioCtx) {
@@ -1000,7 +1070,7 @@
           testMicSource = null;
         }
         try {
-          testMicSource = testMicContext.createMediaStreamSource(localStream);
+          testMicSource = testMicContext.createMediaStreamSource(stream);
           applyPlaybackToTestMicGraph();
           testMicSource.connect(testMicGain).connect(testMicContext.destination);
           if (typeof testMicContext.resume === "function") {
@@ -1020,7 +1090,7 @@
           document.body.appendChild(testMicAudio);
         }
       }
-      testMicAudio.srcObject = localStream;
+      testMicAudio.srcObject = stream;
       testMicAudio.muted = playbackMuted;
       testMicAudio.volume = playbackVolume;
       const playPromise = testMicAudio.play();
@@ -1071,10 +1141,11 @@
           onAriaLabel: "Stop microphone test",
           offAriaLabel: "Test microphone",
         });
+        refreshAmbient();
         return;
       }
       const state = getLocalTrackState();
-      const canTestMic = state.hasAudioTrack && state.hasAudio;
+      const canTestMic = Boolean(navigator.mediaDevices?.getUserMedia);
       if (testMicActive && !canTestMic) {
         stopTestMic();
       }
@@ -1103,6 +1174,7 @@
         onAriaLabel: "Stop microphone test",
         offAriaLabel: "Test microphone",
       });
+      refreshAmbient();
     };
 
     const toggleLocalTrack = (kind) => {
@@ -1121,11 +1193,11 @@
 
     audioToggle?.addEventListener("click", () => toggleLocalTrack("audio"));
     videoToggle?.addEventListener("click", () => toggleLocalTrack("video"));
-    testMicToggle?.addEventListener("click", () => {
+    testMicToggle?.addEventListener("click", async () => {
       if (testMicActive) {
         stopTestMic();
       } else {
-        startTestMic();
+        await startTestMic();
       }
       syncLocalMediaState({ idle: false });
     });
@@ -1150,6 +1222,97 @@
       while (activityLog.children.length > 30) {
         activityLog.removeChild(activityLog.firstChild);
       }
+    };
+
+    const buildAudioConstraints = () => ({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    });
+
+    const buildVideoConstraints = () => ({
+      width: { ideal: 640 },
+      height: { ideal: 360 },
+      facingMode: "user",
+    });
+
+    const describeMediaError = (err) => {
+      if (!err) return "Unknown error";
+      const name = err.name || "UnknownError";
+      const message = err.message ? `: ${err.message}` : "";
+      return `${name}${message}`;
+    };
+
+    const withTimeout = (promise, ms) =>
+      Promise.race([
+        promise,
+        new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+      ]);
+
+    const captureLocalMedia = async ({ timeoutMs = 8000 } = {}) => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        return new MediaStream();
+      }
+      const audioConstraints = buildAudioConstraints();
+      const videoConstraints = buildVideoConstraints();
+      let lastError = null;
+      try {
+        const stream = await withTimeout(
+          navigator.mediaDevices.getUserMedia({
+            audio: audioConstraints,
+            video: videoConstraints,
+          }),
+          timeoutMs
+        );
+        if (stream) return stream;
+      } catch (err) {
+        lastError = err;
+      }
+
+      const merged = new MediaStream();
+      try {
+        const audioStream = await withTimeout(
+          navigator.mediaDevices.getUserMedia({
+            audio: audioConstraints,
+            video: false,
+          }),
+          timeoutMs
+        );
+        if (audioStream) {
+          audioStream.getAudioTracks().forEach((track) => merged.addTrack(track));
+        }
+      } catch (err) {
+        lastError = err;
+      }
+      try {
+        const videoStream = await withTimeout(
+          navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: videoConstraints,
+          }),
+          timeoutMs
+        );
+        if (videoStream) {
+          videoStream.getVideoTracks().forEach((track) => merged.addTrack(track));
+        }
+      } catch (err) {
+        lastError = err;
+      }
+
+      if (!merged.getTracks().length && lastError) {
+        console.warn("Media capture failed, joining without local stream.", lastError);
+        if (lastError.name === "NotAllowedError" || lastError.name === "SecurityError") {
+          log("Mic/cam permission blocked. Check browser or app permissions.");
+        } else if (lastError.name === "NotFoundError") {
+          log("No microphone or camera detected.");
+        } else {
+          log(`Media capture failed (${describeMediaError(lastError)}).`);
+        }
+      } else if (!merged.getTracks().length) {
+        log("Media capture timed out. Joining without local media.");
+      }
+
+      return merged;
     };
 
     if (!socket) {
@@ -1214,28 +1377,10 @@
         return;
       }
       setJoinState("joining");
-      let capturedStream = null;
-      let lastError = null;
-      const attempts = [
-        { audio: true, video: { width: 640, height: 360 } },
-        { audio: true, video: false },
-      ];
-      for (const constraints of attempts) {
-        try {
-          capturedStream = await navigator.mediaDevices.getUserMedia(constraints);
-          break;
-        } catch (err) {
-          lastError = err;
-        }
+      localStream = await captureLocalMedia();
+      if (!localStream) {
+        localStream = new MediaStream();
       }
-      if (!capturedStream) {
-        if (lastError) {
-          console.warn("Media capture failed, joining without local stream.", lastError);
-        }
-        capturedStream = new MediaStream();
-      }
-
-      localStream = capturedStream;
       const hasVideo = localStream.getVideoTracks().length > 0;
       const hasAudio = localStream.getAudioTracks().length > 0;
 
@@ -1419,6 +1564,8 @@
         const video = document.createElement("video");
         video.autoplay = true;
         video.playsInline = true;
+        video.setAttribute("playsinline", "true");
+        video.setAttribute("autoplay", "true");
         video.className = "chat-video-element";
         const chip = document.createElement("span");
         chip.className = "chat-video-chip";
@@ -1431,6 +1578,15 @@
         videoEl.srcObject = stream;
         videoEl.volume = playbackVolume;
         videoEl.muted = playbackMuted;
+        videoEl.addEventListener(
+          "loadedmetadata",
+          () => {
+            if (typeof videoEl.play === "function") {
+              videoEl.play().catch(() => {});
+            }
+          },
+          { once: true }
+        );
         if (typeof videoEl.play === "function") {
           videoEl.play().catch(() => {});
         }
@@ -1463,6 +1619,7 @@
         media: describeMediaState({ hasVideo, hasAudio, idle: false }),
       });
       updateRemotePlaceholder();
+      refreshAmbient();
     }
 
     function removePeer(peerId) {
@@ -1481,6 +1638,7 @@
       }
       updateRemotePlaceholder();
       removeParticipantEntry(peerId);
+      refreshAmbient();
     }
   }
 

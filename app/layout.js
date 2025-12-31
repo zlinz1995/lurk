@@ -23,6 +23,15 @@ export default function RootLayout({ children }) {
       data-native-api-base={nativeApiBase || undefined}
     >
       <body>
+        <div className="ambient-video" id="chat-video-ambient" aria-hidden="true">
+          <video
+            id="chat-video-ambient-source"
+            className="ambient-video-source"
+            autoPlay
+            muted
+            playsInline
+          ></video>
+        </div>
         {children}
         <ChatShell />
         <aside
