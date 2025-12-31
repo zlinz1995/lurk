@@ -154,6 +154,16 @@ export default function RootLayout({ children }) {
                     >
                       Cam
                     </button>
+                    <button
+                      type="button"
+                      id="chat-video-test-mic"
+                      className="chat-video-control"
+                      aria-pressed="false"
+                      aria-label="Test microphone"
+                      disabled
+                    >
+                      Test mic
+                    </button>
                   </div>
                   <div className="chat-video-volume">
                     <button

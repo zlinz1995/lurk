@@ -717,6 +717,7 @@
     const videoToggle = document.getElementById("chat-video-toggle-video");
     const volumeToggle = document.getElementById("chat-video-toggle-volume");
     const volumeSlider = document.getElementById("chat-video-volume");
+    const testMicToggle = document.getElementById("chat-video-test-mic");
 
     if (!startBtn || !stopBtn || !localVideo) return;
 
@@ -724,11 +725,17 @@
     let joined = false;
     const peers = new Map();
     const peerNames = new Map();
+    const peerStreams = new Map();
     const participants = new Map();
     let lastLocalMedia = { hasVideo: false, hasAudio: false, idle: true };
     const clampVolume = (value) => Math.min(1, Math.max(0, value));
     let playbackVolume = 0.8;
     let playbackMuted = false;
+    let testMicActive = false;
+    let testMicAudio = null;
+    let testMicContext = null;
+    let testMicSource = null;
+    let testMicGain = null;
 
     const describeMediaState = (state = {}) => {
       if (state.idle) return "Not connected";
@@ -847,6 +854,31 @@
       });
     };
 
+    const applyPlaybackToTestMic = () => {
+      if (!testMicAudio) return;
+      testMicAudio.volume = playbackVolume;
+      testMicAudio.muted = playbackMuted;
+    };
+
+    const applyPlaybackToTestMicGraph = () => {
+      if (!testMicGain) return;
+      testMicGain.gain.value = playbackMuted ? 0 : playbackVolume;
+    };
+
+    const primePlayback = () => {
+      applyPlaybackToRemotes();
+      if (remoteGrid) {
+        remoteGrid.querySelectorAll("video").forEach((video) => {
+          if (typeof video.play === "function") {
+            video.play().catch(() => {});
+          }
+        });
+      }
+      if (testMicAudio && testMicActive && typeof testMicAudio.play === "function") {
+        testMicAudio.play().catch(() => {});
+      }
+    };
+
     const updateVolumeUi = () => {
       if (volumeSlider) {
         volumeSlider.value = String(Math.round(playbackVolume * 100));
@@ -874,6 +906,8 @@
       }
       updateVolumeUi();
       applyPlaybackToRemotes();
+      applyPlaybackToTestMic();
+      applyPlaybackToTestMicGraph();
     };
 
     if (volumeSlider) {
@@ -934,6 +968,69 @@
       button.setAttribute("aria-label", isOn ? onAriaLabel : offAriaLabel);
     };
 
+    const stopTestMic = () => {
+      testMicActive = false;
+      if (testMicSource) {
+        testMicSource.disconnect();
+        testMicSource = null;
+      }
+      if (testMicGain) {
+        testMicGain.disconnect();
+      }
+      if (testMicAudio) {
+        testMicAudio.pause();
+        testMicAudio.srcObject = null;
+      }
+    };
+
+    const startTestMic = () => {
+      if (!localStream) return;
+      const audioTracks = localStream.getAudioTracks();
+      if (!audioTracks.length || audioTracks.every((track) => !track.enabled)) return;
+      if (!testMicContext) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          testMicContext = new AudioCtx();
+          testMicGain = testMicContext.createGain();
+        }
+      }
+      if (testMicContext && testMicGain) {
+        if (testMicSource) {
+          testMicSource.disconnect();
+          testMicSource = null;
+        }
+        try {
+          testMicSource = testMicContext.createMediaStreamSource(localStream);
+          applyPlaybackToTestMicGraph();
+          testMicSource.connect(testMicGain).connect(testMicContext.destination);
+          if (typeof testMicContext.resume === "function") {
+            testMicContext.resume().catch(() => {});
+          }
+        } catch (err) {
+          console.warn("Test mic audio graph failed:", err);
+        }
+      }
+      if (!testMicAudio) {
+        testMicAudio = document.createElement("audio");
+        testMicAudio.hidden = true;
+        testMicAudio.playsInline = true;
+        testMicAudio.autoplay = true;
+        testMicAudio.setAttribute("aria-hidden", "true");
+        if (document.body && !document.body.contains(testMicAudio)) {
+          document.body.appendChild(testMicAudio);
+        }
+      }
+      testMicAudio.srcObject = localStream;
+      testMicAudio.muted = playbackMuted;
+      testMicAudio.volume = playbackVolume;
+      const playPromise = testMicAudio.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {});
+      }
+      testMicActive = true;
+      primePlayback();
+    };
+
     const getLocalTrackState = () => {
       const videoTracks = localStream ? localStream.getVideoTracks() : [];
       const audioTracks = localStream ? localStream.getAudioTracks() : [];
@@ -946,6 +1043,9 @@
 
     const syncLocalMediaState = ({ idle = false } = {}) => {
       if (idle || !localStream) {
+        if (testMicActive) {
+          stopTestMic();
+        }
         applyLocalMediaState({ hasVideo: false, hasAudio: false, idle: true });
         updateControlButton(audioToggle, {
           available: false,
@@ -963,9 +1063,21 @@
           onAriaLabel: "Turn camera off",
           offAriaLabel: "Turn camera on",
         });
+        updateControlButton(testMicToggle, {
+          available: false,
+          enabled: false,
+          onLabel: "Testing",
+          offLabel: "Test mic",
+          onAriaLabel: "Stop microphone test",
+          offAriaLabel: "Test microphone",
+        });
         return;
       }
       const state = getLocalTrackState();
+      const canTestMic = state.hasAudioTrack && state.hasAudio;
+      if (testMicActive && !canTestMic) {
+        stopTestMic();
+      }
       applyLocalMediaState({ hasVideo: state.hasVideo, hasAudio: state.hasAudio, idle: false });
       updateControlButton(audioToggle, {
         available: state.hasAudioTrack,
@@ -982,6 +1094,14 @@
         offLabel: "Cam off",
         onAriaLabel: "Turn camera off",
         offAriaLabel: "Turn camera on",
+      });
+      updateControlButton(testMicToggle, {
+        available: canTestMic,
+        enabled: testMicActive,
+        onLabel: "Testing",
+        offLabel: "Test mic",
+        onAriaLabel: "Stop microphone test",
+        offAriaLabel: "Test microphone",
       });
     };
 
@@ -1001,6 +1121,14 @@
 
     audioToggle?.addEventListener("click", () => toggleLocalTrack("audio"));
     videoToggle?.addEventListener("click", () => toggleLocalTrack("video"));
+    testMicToggle?.addEventListener("click", () => {
+      if (testMicActive) {
+        stopTestMic();
+      } else {
+        startTestMic();
+      }
+      syncLocalMediaState({ idle: false });
+    });
     volumeToggle?.addEventListener("click", () =>
       setPlaybackState({ muted: !playbackMuted })
     );
@@ -1009,6 +1137,8 @@
       if (!Number.isFinite(value)) return;
       setPlaybackState({ volume: value / 100, muted: value === 0 });
     });
+    volumeToggle?.addEventListener("click", primePlayback);
+    volumeSlider?.addEventListener("change", primePlayback);
 
     const log = (message) => {
       if (!activityLog) return;
@@ -1046,6 +1176,7 @@
       if (!joined) {
         setJoinState("idle");
         updateRemotePlaceholder();
+        stopTestMic();
         syncLocalMediaState({ idle: true });
         return;
       }
@@ -1061,6 +1192,7 @@
       if (localStream) {
         localStream.getTracks().forEach((track) => track.stop());
       }
+      stopTestMic();
       localStream = null;
       if (localVideo) {
         localVideo.srcObject = null;
@@ -1138,6 +1270,7 @@
       setJoinState("joined");
       updateRemotePlaceholder();
       updateSelfParticipant();
+      primePlayback();
 
       if (hasAudio || hasVideo) {
         if (roomInfo.visibility === "private" && roomInfo.code) {
@@ -1239,10 +1372,18 @@
       };
 
       pc.ontrack = (event) => {
-        const [stream] = event.streams || [];
-        if (stream) {
-          attachRemoteStream(peerId, name, stream);
+        let [stream] = event.streams || [];
+        if (!stream && event.track) {
+          stream = peerStreams.get(peerId);
+          if (!stream) {
+            stream = new MediaStream();
+            peerStreams.set(peerId, stream);
+          }
+          if (!stream.getTracks().includes(event.track)) {
+            stream.addTrack(event.track);
+          }
         }
+        if (stream) attachRemoteStream(peerId, name, stream);
       };
 
       pc.onconnectionstatechange = () => {
@@ -1290,6 +1431,9 @@
         videoEl.srcObject = stream;
         videoEl.volume = playbackVolume;
         videoEl.muted = playbackMuted;
+        if (typeof videoEl.play === "function") {
+          videoEl.play().catch(() => {});
+        }
       }
       const chipEl = tile.querySelector(".chat-video-chip");
       if (chipEl) {
@@ -1330,6 +1474,7 @@
       }
       peers.delete(peerId);
       peerNames.delete(peerId);
+      peerStreams.delete(peerId);
       const tile = document.getElementById(`chat-video-peer-${peerId}`);
       if (tile && tile.parentNode) {
         tile.parentNode.removeChild(tile);

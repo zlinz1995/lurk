@@ -2377,6 +2377,8 @@ body[data-page="home"] .chat-video-log {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  row-gap: 6px;
+  flex-wrap: wrap;
   padding: 8px 10px;
   background: linear-gradient(
     180deg,
@@ -2391,6 +2393,7 @@ body[data-page="home"] .chat-video-log {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .chat-video-control {
