@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff5d73"/>
+      <stop offset="1" stop-color="#d63a62"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="36" fill="url(#bg)" stroke="#ffffff" stroke-width="8"/>
+  <path d="M128 196 L78 146 C60 128 60 98 82 82 C100 68 122 72 128 92 C134 72 156 68 174 82 C196 98 196 128 178 146 Z" fill="#fff0f3"/>
+  <text x="128" y="220" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700" fill="#ffffff" letter-spacing="2">LOVE</text>
+</svg>

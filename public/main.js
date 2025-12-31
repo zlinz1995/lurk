@@ -16,6 +16,12 @@
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
   ];
+  const CHAT_STICKERS = Object.freeze({
+    cheer: { src: "/stickers/cheer.svg", label: "Cheer" },
+    wave: { src: "/stickers/wave.svg", label: "Wave" },
+    wow: { src: "/stickers/wow.svg", label: "Wow" },
+    heart: { src: "/stickers/heart.svg", label: "Heart" },
+  });
   const defaultName = createRandomName();
   window.__lurkDisplayName = window.__lurkDisplayName || defaultName;
   const initialPrivateCode = getRoomCodeFromUrl("room");
@@ -424,6 +430,8 @@
     const form = document.getElementById("live-chat-form");
     const input = document.getElementById("live-chat-input");
     const messages = document.getElementById("live-chat-messages");
+    const reactions = document.getElementById("live-chat-reactions");
+    const stickers = document.getElementById("live-chat-stickers");
     if (!form || !input || !messages) return;
 
     const getCurrentRoom = () => getRoomIds().chatId;
@@ -460,10 +468,42 @@
 
     const deliverMessage = (payload) => {
       const roomId = payload && typeof payload === "object" ? payload.roomId : null;
-      if (roomId && roomId !== getCurrentRoom()) return;
+      if (roomId && roomId !== getCurrentRoom()) return false;
       const id = payload && typeof payload === "object" ? payload.id : null;
-      if (id && !rememberId(id)) return;
-      appendChatMessage(payload, messages, defaultName);
+      if (id && !rememberId(id)) return false;
+      const delivered = appendChatMessage(payload, messages, defaultName);
+      if (!delivered) return false;
+      updateLogVisibility();
+      return true;
+    };
+    const buildPayload = ({ text = "", sticker = "" } = {}) => {
+      const socketId = socket && socket.id ? socket.id : defaultName;
+      const roomId = getCurrentRoom();
+      const idSuffix = Math.random().toString(36).slice(2, 7);
+      const payload = {
+        id: `${socketId}-${Date.now()}-${idSuffix}`,
+        name: window.__lurkDisplayName || defaultName,
+        ts: Date.now(),
+        roomId,
+      };
+      if (text) payload.text = text;
+      if (sticker) payload.sticker = sticker;
+      return payload;
+    };
+    const sendPayload = (payload) => {
+      if (!payload) return;
+      if (!deliverMessage(payload)) return;
+      if (socket && typeof socket.emit === "function") {
+        socket.emit("chat message", payload);
+      }
+      broadcastMessage(payload);
+    };
+    const ingestHistory = (items = []) => {
+      if (!Array.isArray(items) || !items.length) return;
+      const sorted = items
+        .slice()
+        .sort((a, b) => (a?.ts ?? 0) - (b?.ts ?? 0));
+      sorted.forEach((item) => deliverMessage(item));
       updateLogVisibility();
     };
 
@@ -474,28 +514,45 @@
       });
     }
 
+    const emojiFromCode = (code = "") => {
+      const parts = String(code)
+        .split("-")
+        .map((part) => Number.parseInt(part, 16))
+        .filter((value) => Number.isFinite(value));
+      if (!parts.length) return "";
+      return String.fromCodePoint(...parts);
+    };
+    const handleReactionClick = (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      const emojiCode = button.dataset.emojiCode;
+      if (emojiCode) {
+        const emoji = emojiFromCode(emojiCode);
+        if (emoji) {
+          sendPayload(buildPayload({ text: emoji }));
+        }
+        return;
+      }
+      const stickerId = button.dataset.stickerId;
+      if (stickerId && CHAT_STICKERS[stickerId]) {
+        sendPayload(buildPayload({ sticker: stickerId }));
+      }
+    };
+    reactions?.addEventListener("click", handleReactionClick);
+    stickers?.addEventListener("click", handleReactionClick);
+
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const text = (input.value || "").trim();
       if (!text) return;
-      const socketId = socket && socket.id ? socket.id : defaultName;
-      const roomId = getCurrentRoom();
-      const payload = {
-        id: `${socketId}-${Date.now()}`,
-        text,
-        name: window.__lurkDisplayName || defaultName,
-        ts: Date.now(),
-        roomId,
-      };
-      deliverMessage(payload);
-      if (socket && typeof socket.emit === "function") {
-        socket.emit("chat message", payload);
-      }
-      broadcastMessage(payload);
+      sendPayload(buildPayload({ text }));
       input.value = "";
     });
 
     if (socket && typeof socket.on === "function") {
+      socket.on("chat history", (items = []) => {
+        ingestHistory(items);
+      });
       socket.on("chat message", (payload) => {
         deliverMessage(payload);
         broadcastMessage(payload);
@@ -524,10 +581,14 @@
   }
 
   function appendChatMessage(payload, target, defaultName) {
-    if (!target) return;
+    if (!target) return false;
     const data =
       typeof payload === "string" ? { text: payload } : payload || {};
-    if (!data.text) return;
+    const messageText = typeof data.text === "string" ? data.text : "";
+    const sticker =
+      data.sticker && CHAT_STICKERS[data.sticker] ? CHAT_STICKERS[data.sticker] : null;
+    if (!messageText && !sticker) return false;
+    const isEmojiOnly = !sticker && isEmojiOnlyMessage(messageText);
 
     const displayName = data.name || defaultName;
     const lastRow = target.lastElementChild;
@@ -537,6 +598,9 @@
     const row = document.createElement("div");
     row.className = "chat-message-row";
     row.dataset.sender = displayName;
+    if (isEmojiOnly) {
+      row.classList.add("is-emoji-reaction");
+    }
 
     if (isContinuation) {
       row.classList.add("is-continuation");
@@ -550,7 +614,18 @@
 
     const bubble = document.createElement("div");
     bubble.className = "chat-message-bubble";
-    bubble.textContent = data.text;
+    if (sticker) {
+      row.classList.add("is-sticker");
+      bubble.classList.add("chat-message-sticker");
+      const image = document.createElement("img");
+      image.className = "chat-message-sticker-image";
+      image.src = sticker.src;
+      image.alt = `${sticker.label} sticker`;
+      image.loading = "lazy";
+      bubble.appendChild(image);
+    } else {
+      bubble.textContent = messageText;
+    }
     row.appendChild(bubble);
 
     const timeLabel = document.createElement("span");
@@ -564,6 +639,18 @@
 
     while (target.children.length > 200) {
       target.removeChild(target.firstChild);
+    }
+    return true;
+  }
+
+  function isEmojiOnlyMessage(text) {
+    if (!text) return false;
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > 8) return false;
+    try {
+      return /^[\p{Extended_Pictographic}\uFE0F\u200D\s]+$/u.test(trimmed);
+    } catch {
+      return false;
     }
   }
 

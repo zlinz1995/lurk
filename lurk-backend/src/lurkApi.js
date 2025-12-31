@@ -24,6 +24,8 @@ const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 
 const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60 * 1000);
 const REACT_MEMORY_TTL = Number(process.env.REACT_TTL_MS ?? 24 * 60 * 60 * 1000);
+const CHAT_HISTORY_LIMIT = Number(process.env.CHAT_HISTORY_LIMIT ?? 200);
+const CHAT_STICKERS = new Set(["cheer", "wave", "wow", "heart"]);
 
 const MOD_ALERT_EMAIL = process.env.MOD_ALERT_EMAIL ?? "z.linz@outlook.com";
 const DEFAULT_FROM_EMAIL =
@@ -31,6 +33,7 @@ const DEFAULT_FROM_EMAIL =
 
 const ALLOWED_MEDIA_PREFIXES = ["image/", "video/", "audio/"];
 const reactMemory = new Map();
+const chatHistory = new Map();
 
 /* -------------------- REQUIRE -------------------- */
 
@@ -177,6 +180,13 @@ function sanitizeMessage(value) {
   return String(value).trim().slice(0, 500);
 }
 
+function sanitizeSticker(value) {
+  if (!value) return "";
+  const cleaned = String(value).toLowerCase().replace(/[^a-z0-9-_]/g, "");
+  if (!CHAT_STICKERS.has(cleaned)) return "";
+  return cleaned;
+}
+
 function prepareSchema(db) {
   db.pragma("foreign_keys = ON");
   db.exec(`
@@ -241,6 +251,21 @@ function setupSockets(server) {
   const CHAT_ROOM_DEFAULT = "chat-global";
   const VIDEO_ROOM_DEFAULT = "video-global";
   const videoRooms = new Map();
+  const recordChatHistory = (roomId, message) => {
+    if (!roomId || !message) return;
+    const history = chatHistory.get(roomId) || [];
+    history.push(message);
+    if (history.length > CHAT_HISTORY_LIMIT) {
+      history.splice(0, history.length - CHAT_HISTORY_LIMIT);
+    }
+    chatHistory.set(roomId, history);
+  };
+  const sendChatHistory = (socket, roomId) => {
+    if (!socket || !roomId) return;
+    const history = chatHistory.get(roomId);
+    if (!history || !history.length) return;
+    socket.emit("chat history", history.slice());
+  };
 
   const normalizeRoomId = (value, fallback) => {
     if (!value) return fallback;
@@ -259,7 +284,7 @@ function setupSockets(server) {
     io.emit("public-rooms", rooms);
   };
 
-  const joinChatRoom = (socket, roomId) => {
+  const joinChatRoom = (socket, roomId, { emitHistory = false } = {}) => {
     const resolvedRoom = normalizeRoomId(roomId, CHAT_ROOM_DEFAULT);
     const currentRoom = socket.data?.chatRoomId;
     if (currentRoom && currentRoom !== resolvedRoom) {
@@ -268,6 +293,9 @@ function setupSockets(server) {
     socket.join(resolvedRoom);
     socket.data.chatRoomId = resolvedRoom;
     emitPublicRooms();
+    if (emitHistory) {
+      sendChatHistory(socket, resolvedRoom);
+    }
     return resolvedRoom;
   };
 
@@ -292,19 +320,23 @@ function setupSockets(server) {
     emitPublicRooms();
 
     socket.on("join-chat-room", ({ roomId } = {}) => {
-      joinChatRoom(socket, roomId);
+      joinChatRoom(socket, roomId, { emitHistory: true });
     });
 
     socket.on("chat message", (payload = {}) => {
       const text = sanitizeMessage(
         typeof payload === "string" ? payload : payload?.text
       );
-      if (!text) return;
+      const sticker = sanitizeSticker(payload?.sticker);
+      if (!text && !sticker) return;
       const name = sanitizeDisplayName(payload?.name);
       const ts = Number.isFinite(payload?.ts) ? payload.ts : Date.now();
       const id = payload?.id || `${socket.id}-${ts}`;
       const roomId = joinChatRoom(socket, payload?.roomId || socket.data?.chatRoomId);
-      io.to(roomId).emit("chat message", { id, text, name, ts, roomId });
+      const message = { id, text, name, ts, roomId };
+      if (sticker) message.sticker = sticker;
+      recordChatHistory(roomId, message);
+      io.to(roomId).emit("chat message", message);
     });
 
     socket.on("join-video-room", ({ roomId, name } = {}) => {

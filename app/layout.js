@@ -134,7 +134,43 @@ export default function RootLayout({ children }) {
             <div className="chat">
               <div id="live-chat-messages" className="chat-log chat-messages"></div>
               <form id="live-chat-form" className="chat-input chat-input-row">
-                <input id="live-chat-input" type="text" placeholder="Chat with people..." autoComplete="off" />
+                <div className="chat-input-stack">
+                  <input id="live-chat-input" type="text" placeholder="Chat with people..." autoComplete="off" />
+                  <div className="chat-reaction-tray" aria-label="Quick reactions">
+                    <div className="chat-reaction-label">Quick reactions</div>
+                    <div id="live-chat-reactions" className="chat-reaction-group">
+                      <button type="button" className="chat-reaction-btn" data-emoji-code="1F44D" aria-label="Send thumbs up">
+                        <span aria-hidden="true">&#x1F44D;</span>
+                      </button>
+                      <button type="button" className="chat-reaction-btn" data-emoji-code="1F602" aria-label="Send laughing">
+                        <span aria-hidden="true">&#x1F602;</span>
+                      </button>
+                      <button type="button" className="chat-reaction-btn" data-emoji-code="1F44F" aria-label="Send applause">
+                        <span aria-hidden="true">&#x1F44F;</span>
+                      </button>
+                      <button type="button" className="chat-reaction-btn" data-emoji-code="1F389" aria-label="Send party popper">
+                        <span aria-hidden="true">&#x1F389;</span>
+                      </button>
+                      <button type="button" className="chat-reaction-btn" data-emoji-code="2764-FE0F" aria-label="Send heart">
+                        <span aria-hidden="true">&#x2764;&#xFE0F;</span>
+                      </button>
+                    </div>
+                    <div id="live-chat-stickers" className="chat-reaction-group chat-reaction-stickers">
+                      <button type="button" className="chat-reaction-btn chat-sticker-btn" data-sticker-id="cheer" aria-label="Send cheer sticker">
+                        <img src="/stickers/cheer.svg" alt="" aria-hidden="true" />
+                      </button>
+                      <button type="button" className="chat-reaction-btn chat-sticker-btn" data-sticker-id="wave" aria-label="Send wave sticker">
+                        <img src="/stickers/wave.svg" alt="" aria-hidden="true" />
+                      </button>
+                      <button type="button" className="chat-reaction-btn chat-sticker-btn" data-sticker-id="wow" aria-label="Send wow sticker">
+                        <img src="/stickers/wow.svg" alt="" aria-hidden="true" />
+                      </button>
+                      <button type="button" className="chat-reaction-btn chat-sticker-btn" data-sticker-id="heart" aria-label="Send heart sticker">
+                        <img src="/stickers/heart.svg" alt="" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
                 <button type="submit" className="chat-send-btn">
                   Send
                 </button>
