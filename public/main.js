@@ -713,6 +713,10 @@
     const participantList = document.getElementById("chat-video-participant-list");
     const participantCount = document.getElementById("chat-video-participant-count");
     const roomStatus = document.getElementById("chat-room-status");
+    const audioToggle = document.getElementById("chat-video-toggle-audio");
+    const videoToggle = document.getElementById("chat-video-toggle-video");
+    const volumeToggle = document.getElementById("chat-video-toggle-volume");
+    const volumeSlider = document.getElementById("chat-video-volume");
 
     if (!startBtn || !stopBtn || !localVideo) return;
 
@@ -722,6 +726,9 @@
     const peerNames = new Map();
     const participants = new Map();
     let lastLocalMedia = { hasVideo: false, hasAudio: false, idle: true };
+    const clampVolume = (value) => Math.min(1, Math.max(0, value));
+    let playbackVolume = 0.8;
+    let playbackMuted = false;
 
     const describeMediaState = (state = {}) => {
       if (state.idle) return "Not connected";
@@ -831,6 +838,52 @@
         stopBtn.disabled = true;
       }
     };
+
+    const applyPlaybackToRemotes = () => {
+      if (!remoteGrid) return;
+      remoteGrid.querySelectorAll("video").forEach((video) => {
+        video.volume = playbackVolume;
+        video.muted = playbackMuted;
+      });
+    };
+
+    const updateVolumeUi = () => {
+      if (volumeSlider) {
+        volumeSlider.value = String(Math.round(playbackVolume * 100));
+      }
+      if (volumeToggle) {
+        volumeToggle.setAttribute("aria-pressed", playbackMuted ? "false" : "true");
+        volumeToggle.classList.toggle("is-off", playbackMuted);
+        volumeToggle.textContent = playbackMuted ? "Muted" : "Vol";
+        volumeToggle.setAttribute(
+          "aria-label",
+          playbackMuted ? "Unmute playback" : "Mute playback"
+        );
+      }
+    };
+
+    const setPlaybackState = ({ volume, muted } = {}) => {
+      if (typeof volume === "number" && Number.isFinite(volume)) {
+        playbackVolume = clampVolume(volume);
+      }
+      if (typeof muted === "boolean") {
+        playbackMuted = muted;
+      }
+      if (playbackVolume === 0) {
+        playbackMuted = true;
+      }
+      updateVolumeUi();
+      applyPlaybackToRemotes();
+    };
+
+    if (volumeSlider) {
+      const initialVolume = Number.parseFloat(volumeSlider.value);
+      if (Number.isFinite(initialVolume)) {
+        playbackVolume = clampVolume(initialVolume / 100);
+      }
+    }
+    setPlaybackState({ volume: playbackVolume, muted: playbackMuted });
+
     updateRemotePlaceholder();
     updateSelfParticipant();
     setJoinState("idle");
@@ -867,7 +920,95 @@
       }
       updateSelfParticipant();
     };
-    applyLocalMediaState({ hasVideo: false, hasAudio: false, idle: true });
+
+    const updateControlButton = (
+      button,
+      { available, enabled, onLabel, offLabel, onAriaLabel, offAriaLabel }
+    ) => {
+      if (!button) return;
+      const isOn = available && enabled;
+      button.disabled = !available;
+      button.setAttribute("aria-pressed", isOn ? "true" : "false");
+      button.classList.toggle("is-off", !isOn);
+      button.textContent = isOn ? onLabel : offLabel;
+      button.setAttribute("aria-label", isOn ? onAriaLabel : offAriaLabel);
+    };
+
+    const getLocalTrackState = () => {
+      const videoTracks = localStream ? localStream.getVideoTracks() : [];
+      const audioTracks = localStream ? localStream.getAudioTracks() : [];
+      const hasVideoTrack = videoTracks.length > 0;
+      const hasAudioTrack = audioTracks.length > 0;
+      const hasVideo = hasVideoTrack && videoTracks.some((track) => track.enabled);
+      const hasAudio = hasAudioTrack && audioTracks.some((track) => track.enabled);
+      return { hasVideoTrack, hasAudioTrack, hasVideo, hasAudio };
+    };
+
+    const syncLocalMediaState = ({ idle = false } = {}) => {
+      if (idle || !localStream) {
+        applyLocalMediaState({ hasVideo: false, hasAudio: false, idle: true });
+        updateControlButton(audioToggle, {
+          available: false,
+          enabled: false,
+          onLabel: "Mic",
+          offLabel: "Mic off",
+          onAriaLabel: "Mute microphone",
+          offAriaLabel: "Unmute microphone",
+        });
+        updateControlButton(videoToggle, {
+          available: false,
+          enabled: false,
+          onLabel: "Cam",
+          offLabel: "Cam off",
+          onAriaLabel: "Turn camera off",
+          offAriaLabel: "Turn camera on",
+        });
+        return;
+      }
+      const state = getLocalTrackState();
+      applyLocalMediaState({ hasVideo: state.hasVideo, hasAudio: state.hasAudio, idle: false });
+      updateControlButton(audioToggle, {
+        available: state.hasAudioTrack,
+        enabled: state.hasAudio,
+        onLabel: "Mic",
+        offLabel: "Mic off",
+        onAriaLabel: "Mute microphone",
+        offAriaLabel: "Unmute microphone",
+      });
+      updateControlButton(videoToggle, {
+        available: state.hasVideoTrack,
+        enabled: state.hasVideo,
+        onLabel: "Cam",
+        offLabel: "Cam off",
+        onAriaLabel: "Turn camera off",
+        offAriaLabel: "Turn camera on",
+      });
+    };
+
+    const toggleLocalTrack = (kind) => {
+      if (!localStream) return;
+      const tracks =
+        kind === "video" ? localStream.getVideoTracks() : localStream.getAudioTracks();
+      if (!tracks.length) return;
+      const isEnabled = tracks.some((track) => track.enabled);
+      tracks.forEach((track) => {
+        track.enabled = !isEnabled;
+      });
+      syncLocalMediaState({ idle: false });
+    };
+
+    syncLocalMediaState({ idle: true });
+
+    audioToggle?.addEventListener("click", () => toggleLocalTrack("audio"));
+    videoToggle?.addEventListener("click", () => toggleLocalTrack("video"));
+    volumeToggle?.addEventListener("click", () =>
+      setPlaybackState({ muted: !playbackMuted })
+    );
+    volumeSlider?.addEventListener("input", (event) => {
+      const value = Number.parseFloat(event.target?.value);
+      if (!Number.isFinite(value)) return;
+      setPlaybackState({ volume: value / 100, muted: value === 0 });
+    });
 
     const log = (message) => {
       if (!activityLog) return;
@@ -905,7 +1046,7 @@
       if (!joined) {
         setJoinState("idle");
         updateRemotePlaceholder();
-        applyLocalMediaState({ hasVideo: false, hasAudio: false, idle: true });
+        syncLocalMediaState({ idle: true });
         return;
       }
       socket.emit("leave-video-room", {});
@@ -926,7 +1067,7 @@
       }
       joined = false;
       setJoinState("idle");
-      applyLocalMediaState({ hasVideo: false, hasAudio: false, idle: true });
+      syncLocalMediaState({ idle: true });
       log("You left the video room.");
     };
 
@@ -976,7 +1117,7 @@
           localVideo.srcObject = null;
         }
       }
-      applyLocalMediaState({ hasVideo, hasAudio, idle: false });
+      syncLocalMediaState({ idle: false });
 
       const roomInfo = describeRoom();
       if (!hasVideo && hasAudio) {
@@ -1145,7 +1286,11 @@
         remoteGrid.appendChild(tile);
       }
       const videoEl = tile.querySelector("video");
-      if (videoEl) videoEl.srcObject = stream;
+      if (videoEl) {
+        videoEl.srcObject = stream;
+        videoEl.volume = playbackVolume;
+        videoEl.muted = playbackMuted;
+      }
       const chipEl = tile.querySelector(".chat-video-chip");
       if (chipEl) {
         chipEl.textContent = name || peerNames.get(peerId) || "Guest";
@@ -1206,16 +1351,27 @@
         }
       }
       const stored = getApiBaseFromStorage();
+      const isNative = isNativeShell();
+      const nativeSource = isNative ? getNativeApiBase() : "";
       const source =
         urlParam ||
         window.__LURK_API_BASE ||
         stored ||
+        nativeSource ||
         document.documentElement?.dataset?.apiBase ||
         document.body?.dataset?.apiBase ||
         "";
       const trimmed = source ? source.replace(/\/$/, "") : "";
       const currentHost = window.location?.hostname || "";
       const onLocalhost = isLocalHost(currentHost);
+
+      if (isNative) {
+        const baseHost = getHostname(trimmed);
+        if (isLocalHost(baseHost)) {
+          return nativeSource ? nativeSource.replace(/\/$/, "") : "";
+        }
+        return trimmed;
+      }
 
       if (!onLocalhost) {
         if (!trimmed) return "";
@@ -1230,6 +1386,26 @@
     } catch {
       return "";
     }
+  }
+
+  function isNativeShell() {
+    const cap = window.Capacitor;
+    if (!cap) return false;
+    if (typeof cap.isNativePlatform === "function") {
+      return cap.isNativePlatform();
+    }
+    if (typeof cap.getPlatform === "function") {
+      return cap.getPlatform() !== "web";
+    }
+    return true;
+  }
+
+  function getNativeApiBase() {
+    const source =
+      document.documentElement?.dataset?.nativeApiBase ||
+      document.body?.dataset?.nativeApiBase ||
+      "";
+    return source ? source.replace(/\/$/, "") : "";
   }
 
   function getApiBaseFromUrl() {

@@ -10,9 +10,18 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   const apiBase = resolveApiBase(process.env.NEXT_PUBLIC_API_URL);
+  const nativeApiBase = resolveApiBase(
+    process.env.NEXT_PUBLIC_NATIVE_API_URL ||
+      process.env.NEXT_PUBLIC_MOBILE_API_URL ||
+      ""
+  );
 
   return (
-    <html lang="en" data-api-base={apiBase}>
+    <html
+      lang="en"
+      data-api-base={apiBase}
+      data-native-api-base={nativeApiBase || undefined}
+    >
       <body>
         {children}
         <ChatShell />
@@ -123,6 +132,51 @@ export default function RootLayout({ children }) {
                 <span id="chat-video-local-chip" className="chat-video-chip">
                   You
                 </span>
+                <div className="chat-video-controls" aria-label="Video controls">
+                  <div className="chat-video-control-group">
+                    <button
+                      type="button"
+                      id="chat-video-toggle-audio"
+                      className="chat-video-control"
+                      aria-pressed="false"
+                      aria-label="Mute microphone"
+                      disabled
+                    >
+                      Mic
+                    </button>
+                    <button
+                      type="button"
+                      id="chat-video-toggle-video"
+                      className="chat-video-control"
+                      aria-pressed="false"
+                      aria-label="Turn camera off"
+                      disabled
+                    >
+                      Cam
+                    </button>
+                  </div>
+                  <div className="chat-video-volume">
+                    <button
+                      type="button"
+                      id="chat-video-toggle-volume"
+                      className="chat-video-control"
+                      aria-pressed="true"
+                      aria-label="Mute playback"
+                    >
+                      Vol
+                    </button>
+                    <input
+                      id="chat-video-volume"
+                      className="chat-video-volume-slider"
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      defaultValue={80}
+                      aria-label="Playback volume"
+                    />
+                  </div>
+                </div>
               </div>
               <div className="chat-video-remote-wrapper">
                 <div id="chat-video-remote" className="chat-video-remote-grid"></div>

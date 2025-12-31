@@ -1472,6 +1472,20 @@ body[data-page="home"] .chat-video-remote-wrapper {
   aspect-ratio: auto;
 }
 
+body[data-page="home"] .chat-video-controls {
+  padding: 6px 8px;
+}
+
+body[data-page="home"] .chat-video-control {
+  padding: 3px 8px;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+}
+
+body[data-page="home"] .chat-video-volume-slider {
+  width: 70px;
+}
+
 /* Chat message container */
 .chat-messages {
   display: flex;
@@ -1923,6 +1937,8 @@ body[data-page="home"] .chat-video-remote-wrapper {
 
 .chat-video-local-placeholder {
   font-size: 0.74rem;
+  pointer-events: none;
+  z-index: 1;
 }
 
 
@@ -1966,6 +1982,82 @@ body[data-page="home"] .chat-video-remote-wrapper {
 
   letter-spacing: 0.08em;
   font-size: 0.7rem;
+}
+
+.chat-video-card.chat-video-local .chat-video-chip {
+  top: 8px;
+  bottom: auto;
+  z-index: 2;
+}
+
+.chat-video-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(
+    180deg,
+    rgba(5,8,16,0) 0%,
+    rgba(5,8,16,0.75) 65%,
+    rgba(5,8,16,0.9) 100%
+  );
+  z-index: 2;
+}
+
+.chat-video-control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-video-control {
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(6,10,20,0.75);
+  color: rgba(234,246,255,0.92);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.chat-video-control:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0 10px rgba(0,180,255,0.25);
+}
+
+.chat-video-control:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0,180,255,0.35);
+}
+
+.chat-video-control:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.chat-video-control.is-off {
+  color: rgba(255,210,210,0.95);
+  border-color: rgba(255,120,120,0.45);
+}
+
+.chat-video-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-video-volume-slider {
+  width: 90px;
+  accent-color: #2cc6ff;
 }
 
 
@@ -2144,6 +2236,20 @@ body[data-page="home"] .chat-video-remote-wrapper {
   /* Video cards stack cleaner on mobile */
   .video-grid {
     grid-template-columns: 1fr;
+  }
+
+  .chat-video-controls {
+    padding: 6px 8px;
+  }
+
+  .chat-video-control {
+    padding: 3px 8px;
+    font-size: 0.6rem;
+    letter-spacing: 0.06em;
+  }
+
+  .chat-video-volume-slider {
+    width: 70px;
   }
 }
 
