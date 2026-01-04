@@ -52,14 +52,21 @@ export default function RootLayout({ children }) {
               Live Chat
             </button>
             <div className="chat-current-users">
-              <span className="chat-current-users-label">Current Users:</span>
+              <span className="chat-current-users-label">Online Now:</span>
               <span id="chat-video-participant-count" className="chat-current-count">
                 0
               </span>
             </div>
           </div>
           <div id="chat-widget-body" className="chat-participant-list-container" aria-live="polite">
-            <ul id="chat-video-participant-list" className="chat-video-participant-list chat-current-user-list"></ul>
+            <div className="chat-online-tracker" role="status" aria-live="polite">
+              <div className="chat-online-label">Online Now</div>
+              <div className="chat-online-count-row">
+                <span id="chat-online-count" className="chat-online-count">
+                  5
+                </span>
+              </div>
+            </div>
           </div>
           <div className="chat-panel-content">
             <section className="chat-video-toolbar">
@@ -207,7 +214,12 @@ export default function RootLayout({ children }) {
             <div className="chat">
               <div id="live-chat-messages" className="chat-log chat-messages"></div>
               <form id="live-chat-form" className="chat-input chat-input-row">
-                <input id="live-chat-input" type="text" placeholder="Chat with people..." autoComplete="off" />
+                <input
+                  id="live-chat-input"
+                  type="text"
+                  placeholder="Chat with people..."
+                  autoComplete="off"
+                />
                 <div className="chat-reaction-tray chat-reaction-inline" aria-label="Quick reactions">
                   <span className="chat-reaction-label">Reactions</span>
                   <div id="live-chat-reactions" className="chat-reaction-group chat-reaction-inline-group">

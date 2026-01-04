@@ -1148,61 +1148,41 @@ body[data-page="home"] .chat-input-row {
   padding: 10px 20px 12px;
   background: rgba(6,10,20,0.92);
   border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-
-.chat-participant-list-container .chat-video-participant-list {
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  max-height: 150px;
-  overflow-y: auto;
-}
-
-.chat-video-participant {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-
-  padding: 6px 0;
-
-  font-size: 0.78rem;
-
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  gap: 8px;
 }
 
-.chat-video-participant:last-child {
-  border-bottom: none;
+.chat-online-tracker {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(8,12,22,0.85);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35), 0 0 16px rgba(0,180,255,0.16);
 }
 
-.chat-video-participant .label {
-  font-weight: 600;
+.chat-online-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.76rem;
+  color: rgba(234,246,255,0.72);
 }
 
-.chat-video-participant.is-self .label::after {
-  content: " (you)";
-  font-weight: 400;
-  color: rgba(234,246,255,0.7);
+.chat-online-count-row {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
 }
 
-.chat-video-participant .status {
-  font-size: 0.72rem;
-  color: rgba(234,246,255,0.65);
+.chat-online-count {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #fff;
 }
-
-.chat-video-participant.is-offline .status {
-  color: rgba(234,246,255,0.4);
-}
-
-.chat-video-participant-empty {
-  font-size: 0.75rem;
-  color: rgba(234,246,255,0.7);
-}
-
 
 /* ======================================================================
    CHAT BODY + MESSAGES

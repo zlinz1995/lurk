@@ -42,27 +42,51 @@
     setRoomState("", { visibility: "public", updateUrl: false, announce: false });
   }
 
-  onReady(() => {
-    setupRoomControls();
-    setupTextChat(null, defaultName);
-    ensureSocketClient()
+  const socketState = { socket: null, promise: null };
+
+  function ensureLiveSocket() {
+    if (socketState.socket && socketState.socket.connected) {
+      return Promise.resolve(socketState.socket);
+    }
+    if (socketState.socket && !socketState.socket.connected) {
+      try {
+        socketState.socket.disconnect();
+      } catch {
+        // Ignore shutdown failures.
+      }
+      socketState.socket = null;
+    }
+    if (socketState.promise) return socketState.promise;
+    socketState.promise = ensureSocketClient()
       .then((ioLib) => connectSocket(ioLib))
       .then((socket) => {
         if (!socket) {
           console.warn("Socket.io client unavailable");
+          return null;
         }
-        wireDisplayNameSync(defaultName);
+        socketState.socket = socket;
         setupPublicRoomList(socket);
         setupTextChat(socket, defaultName);
         setupVideoChat(socket, defaultName);
+        return socket;
       })
       .catch((err) => {
         console.error("Live chat bootstrap failed:", err);
-        wireDisplayNameSync(defaultName);
-        setupPublicRoomList(null);
-        setupTextChat(null, defaultName);
-        setupVideoChat(null, defaultName);
+        return null;
+      })
+      .finally(() => {
+        socketState.promise = null;
       });
+    return socketState.promise;
+  }
+
+  onReady(() => {
+    setupRoomControls();
+    wireDisplayNameSync(defaultName);
+    setupPublicRoomList(null);
+    setupTextChat(null, defaultName);
+    setupVideoChat(null, defaultName);
+    ensureLiveSocket();
   });
 
   function onReady(cb) {
@@ -494,7 +518,12 @@
       updateLogVisibility();
       return true;
     };
-    const buildPayload = ({ text = "", sticker = "" } = {}) => {
+    const buildPayload = ({
+      text = "",
+      sticker = "",
+      fromAssistant = false,
+      nameOverride = "",
+    } = {}) => {
       const activeSocket = getSocket();
       const socketId =
         activeSocket && activeSocket.id ? activeSocket.id : state.defaultName;
@@ -502,17 +531,22 @@
       const idSuffix = Math.random().toString(36).slice(2, 7);
       const payload = {
         id: `${socketId}-${Date.now()}-${idSuffix}`,
-        name: window.__lurkDisplayName || state.defaultName,
+        name: nameOverride || window.__lurkDisplayName || state.defaultName,
         ts: Date.now(),
         roomId,
       };
       if (text) payload.text = text;
       if (sticker) payload.sticker = sticker;
+      if (fromAssistant) payload.fromAssistant = true;
       return payload;
     };
     const sendPayload = (payload) => {
       if (!payload) return;
       if (!deliverMessage(payload)) return;
+      if (payload.fromAssistant) {
+        broadcastMessage(payload);
+        return;
+      }
       const activeSocket = getSocket();
       if (activeSocket && typeof activeSocket.emit === "function" && activeSocket.connected) {
         activeSocket.emit("chat message", payload);
@@ -569,6 +603,7 @@
       const text = (input.value || "").trim();
       if (!text) return;
       sendPayload(buildPayload({ text }));
+      scheduleAssistantReply(text);
       input.value = "";
     });
 
@@ -625,6 +660,186 @@
       }
       joinChatRoom();
     });
+
+    const assistantPersonas = [
+      {
+        name: "Ava (Assistant)",
+        replies: {
+          default: [
+            "That makes sense. Want to unpack it a bit?",
+            "I'm listening - what part matters most?",
+            "Totally with you. What's the next detail?",
+            "Okay, take your time. What's the bigger picture?",
+            "I'm here. What do you want to focus on?",
+          ],
+          short: [
+            "Hey! Want to add a little more?",
+            "Got it. What's the rest of the story?",
+            "I'm here - tell me more.",
+          ],
+          question: [
+            "Good question. What made you ask?",
+            "Hmm, what's your gut say on that?",
+            "Let's dig in - what's the key piece?",
+          ],
+        },
+      },
+      {
+        name: "Miles (Assistant)",
+        replies: {
+          default: [
+            "Got it. What's the goal here?",
+            "Alright - what's the next step?",
+            "Understood. What outcome are you after?",
+            "Makes sense. Any constraints I should know?",
+            "Okay. What's one thing you want to change?",
+          ],
+          short: [
+            "Clear. What else is in play?",
+            "Okay. What should happen next?",
+            "Noted. Give me a bit more context.",
+          ],
+          question: [
+            "Depends. What's the end result you want?",
+            "Could be a few ways. What's most important?",
+            "Let's frame it - what would success look like?",
+          ],
+        },
+      },
+      {
+        name: "Nia (Assistant)",
+        replies: {
+          default: [
+            "Hey! What's the vibe right now?",
+            "Ooh, tell me more - what's the story?",
+            "I'm in. What's been going on?",
+            "Alright, spill - what's up?",
+            "I'm all ears. What's the headline?",
+          ],
+          short: [
+            "Yo, hit me with more.",
+            "Gotcha. What happened after that?",
+            "Say more - I'm curious.",
+          ],
+          question: [
+            "Hmm, what do you hope happens?",
+            "Good ask. What's your take so far?",
+            "Interesting - what's pushing you to ask that?",
+          ],
+        },
+      },
+      {
+        name: "Tomas (Assistant)",
+        replies: {
+          default: [
+            "Interesting. What led you to that?",
+            "I hear you. What part feels biggest?",
+            "That tracks. What sparked it?",
+            "Okay. What's the backstory?",
+            "Hmm. How did that land with you?",
+          ],
+          short: [
+            "Go on - what's underneath that?",
+            "I'm with you. What made you say that?",
+            "Tell me a little more.",
+          ],
+          question: [
+            "Let's think it through. What's the context?",
+            "What does your instinct say?",
+            "Depends on the angle. What matters most here?",
+          ],
+        },
+      },
+      {
+        name: "Harper (Assistant)",
+        replies: {
+          default: [
+            "Hey, no rush - want to share a bit more?",
+            "Alright, what's on your mind?",
+            "Gotcha. How's that been feeling?",
+            "Okay, I'm with you. What's next?",
+            "That sounds like a lot. Where should we start?",
+          ],
+          short: [
+            "No worries. Want to add more?",
+            "I'm here. Keep going if you want.",
+            "Okay. What's the next piece?",
+          ],
+          question: [
+            "What do you want out of it?",
+            "Hard to say - what's the situation?",
+            "Let's unpack it. What's the main tension?",
+          ],
+        },
+      },
+      {
+        name: "Jules (Assistant)",
+        replies: {
+          default: [
+            "Okay, plot twist - what happened next?",
+            "Interesting. Give me the quick version.",
+            "Ah, that's a vibe. What's the context?",
+            "Alright, I'm curious - what's the backstory?",
+            "Got it. What's the key detail?",
+          ],
+          short: [
+            "Nice. What's the angle?",
+            "Cool. What else happened?",
+            "Alright, add a bit more color.",
+          ],
+          question: [
+            "Could be a few things. What's your hunch?",
+            "Let's play it out - what would you prefer?",
+            "Depends. What's the bigger picture?",
+          ],
+        },
+      },
+    ];
+    const assistantState = {
+      nextIndex: 0,
+      lastReplyByName: new Map(),
+    };
+    const pickAssistant = () => {
+      const persona = assistantPersonas[assistantState.nextIndex % assistantPersonas.length];
+      assistantState.nextIndex += 1;
+      return persona;
+    };
+    const pickReply = (persona, userText = "") => {
+      const trimmed = userText.trim();
+      const wordCount = trimmed ? trimmed.split(/\s+/).length : 0;
+      let key = "default";
+      if (trimmed.endsWith("?")) {
+        key = "question";
+      } else if (wordCount <= 2) {
+        key = "short";
+      }
+      const pool = (persona.replies && persona.replies[key]) || persona.replies.default;
+      if (!pool || !pool.length) return "Tell me more.";
+      const last = assistantState.lastReplyByName.get(persona.name);
+      let choice = pool[Math.floor(Math.random() * pool.length)];
+      if (pool.length > 1 && choice === last) {
+        choice = pool[(pool.indexOf(choice) + 1) % pool.length];
+      }
+      assistantState.lastReplyByName.set(persona.name, choice);
+      return choice;
+    };
+    const buildAssistantReply = (userText = "") => {
+      const persona = pickAssistant();
+      return buildPayload({
+        text: pickReply(persona, userText),
+        fromAssistant: true,
+        nameOverride: persona.name,
+      });
+    };
+
+    const scheduleAssistantReply = (userText = "") => {
+      if (!userText.trim()) return;
+      const delay = 650 + Math.random() * 700;
+      setTimeout(() => {
+        const assistantPayload = buildAssistantReply(userText);
+        sendPayload(assistantPayload);
+      }, delay);
+    };
   }
 
   function appendChatMessage(payload, target, defaultName) {
@@ -702,6 +917,12 @@
   }
 
   function setupVideoChat(socket, defaultName) {
+    const existingState = window.__lurkVideoChatState;
+    if (existingState) {
+      if (socket) existingState.setSocket(socket);
+      return;
+    }
+
     const startBtn = document.getElementById("chat-video-start");
     const stopBtn = document.getElementById("chat-video-stop");
     const localVideo = document.getElementById("chat-video-local");
@@ -710,8 +931,8 @@
     const localPlaceholder = document.getElementById("chat-video-local-placeholder");
     const localChip = document.getElementById("chat-video-local-chip");
     const activityLog = document.getElementById("chat-video-log");
-    const participantList = document.getElementById("chat-video-participant-list");
     const participantCount = document.getElementById("chat-video-participant-count");
+    const onlineCount = document.getElementById("chat-online-count");
     const roomStatus = document.getElementById("chat-room-status");
     const audioToggle = document.getElementById("chat-video-toggle-audio");
     const videoToggle = document.getElementById("chat-video-toggle-video");
@@ -722,6 +943,14 @@
     const ambientVideo = document.getElementById("chat-video-ambient-source");
 
     if (!startBtn || !stopBtn || !localVideo) return;
+
+    const state = {
+      socket,
+      boundSocket: null,
+      setSocket: null,
+    };
+    window.__lurkVideoChatState = state;
+    const getSocket = () => state.socket;
 
     let localStream = null;
     let joined = false;
@@ -789,42 +1018,14 @@
     };
 
     const renderParticipants = () => {
-      if (!participantList) return;
-      participantList.innerHTML = "";
       const entries = Array.from(participants.values());
-      if (!entries.length) {
-        const empty = document.createElement("li");
-        empty.className = "chat-video-participant chat-video-participant-empty";
-        empty.textContent = "No participants yet.";
-        participantList.appendChild(empty);
-      } else {
-        entries
-          .sort((a, b) => {
-            if (a.isSelf && !b.isSelf) return -1;
-            if (!a.isSelf && b.isSelf) return 1;
-            return (a.name || "").localeCompare(b.name || "");
-          })
-          .forEach((entry) => {
-            const li = document.createElement("li");
-            li.className = "chat-video-participant";
-            if (entry.isSelf) li.classList.add("is-self");
-            if (!entry.connected) li.classList.add("is-offline");
-            const nameSpan = document.createElement("span");
-            nameSpan.className = "label";
-            nameSpan.textContent = entry.name || "Guest";
-            const statusSpan = document.createElement("span");
-            statusSpan.className = "status";
-            statusSpan.textContent = entry.connected
-              ? entry.media || "Connected"
-              : "Not connected";
-            li.appendChild(nameSpan);
-            li.appendChild(statusSpan);
-            participantList.appendChild(li);
-          });
-      }
       if (participantCount) {
         const connectedCount = entries.filter((entry) => entry.connected).length;
-        participantCount.textContent = connectedCount;
+        const displayCount = connectedCount;
+        participantCount.textContent = displayCount;
+        if (onlineCount) {
+          onlineCount.textContent = displayCount;
+        }
       }
     };
 
@@ -1315,25 +1516,29 @@
       return merged;
     };
 
-    if (!socket) {
-      let statusTimer = null;
-      const flashStatus = (message) => {
-        if (!roomStatus) return;
-        const base = roomStatus.dataset.baseText || roomStatus.textContent;
-        roomStatus.textContent = message;
-        if (statusTimer) clearTimeout(statusTimer);
-        statusTimer = setTimeout(() => {
-          roomStatus.textContent = roomStatus.dataset.baseText || base;
-        }, 2400);
-      };
-      const offlineNotice = () =>
-        flashStatus("Live video is offline. Start the backend service.");
-      startBtn.addEventListener("click", offlineNotice);
-      stopBtn.addEventListener("click", () => {
-        flashStatus("You're not in a video room.");
-      });
-      return;
-    }
+    let statusTimer = null;
+    const flashStatus = (message) => {
+      if (!roomStatus) return;
+      const base = roomStatus.dataset.baseText || roomStatus.textContent;
+      roomStatus.textContent = message;
+      if (statusTimer) clearTimeout(statusTimer);
+      statusTimer = setTimeout(() => {
+        roomStatus.textContent = roomStatus.dataset.baseText || base;
+      }, 2400);
+    };
+    const apiHint = (() => {
+      try {
+        const base = getApiBase();
+        if (base) return base;
+      } catch {
+        // ignore
+      }
+      const origin =
+        window.location && window.location.origin ? window.location.origin : "";
+      return origin || "your API host";
+    })();
+    const offlineNotice = () =>
+      flashStatus(`Live video is offline. Check the socket server at ${apiHint}.`);
 
     const leaveRoom = () => {
       if (!joined) {
@@ -1343,7 +1548,10 @@
         syncLocalMediaState({ idle: true });
         return;
       }
-      socket.emit("leave-video-room", {});
+      const activeSocket = getSocket();
+      if (activeSocket && typeof activeSocket.emit === "function") {
+        activeSocket.emit("leave-video-room", {});
+      }
       peers.forEach((pc) => pc.close());
       peers.clear();
       peerNames.clear();
@@ -1363,6 +1571,7 @@
       joined = false;
       setJoinState("idle");
       syncLocalMediaState({ idle: true });
+      updateSelfParticipant();
       log("You left the video room.");
     };
 
@@ -1377,6 +1586,15 @@
         return;
       }
       setJoinState("joining");
+      let activeSocket = getSocket();
+      if (!activeSocket || !activeSocket.connected) {
+        activeSocket = await ensureLiveSocket();
+      }
+      if (!activeSocket) {
+        setJoinState("idle");
+        offlineNotice();
+        return;
+      }
       localStream = await captureLocalMedia();
       if (!localStream) {
         localStream = new MediaStream();
@@ -1406,7 +1624,7 @@
       }
       log(`Connecting you to the ${roomInfo.label}...`);
 
-      socket.emit("join-video-room", {
+      activeSocket.emit("join-video-room", {
         roomId: getCurrentRoom(),
         name: getName(),
       });
@@ -1428,8 +1646,13 @@
       }
     });
 
-    stopBtn.addEventListener("click", leaveRoom);
-    socket.on("disconnect", leaveRoom);
+    stopBtn.addEventListener("click", () => {
+      if (!joined) {
+        flashStatus("You're not in a video room.");
+        return;
+      }
+      leaveRoom();
+    });
     window.addEventListener("beforeunload", leaveRoom);
     window.addEventListener("lurk-livechat-close", leaveRoom);
     window.addEventListener("lurk-room-change", (event) => {
@@ -1439,10 +1662,11 @@
       log(`Room changed. Join again to enter the ${info.label}.`);
     });
 
-    socket.on("video-existing-peers", (existing = []) => {
-      if (!joined || !localStream) return;
+    const handleExistingPeers = (existing = []) => {
+      const activeSocket = getSocket();
+      if (!joined || !localStream || !activeSocket) return;
       existing.forEach(({ peerId, name }) => {
-        if (peerId === socket.id) return;
+        if (peerId === activeSocket.id) return;
         const displayName = name || peerNames.get(peerId) || `Guest-${peerId.slice(-4)}`;
         peerNames.set(peerId, displayName);
         upsertParticipant(peerId, {
@@ -1452,10 +1676,11 @@
         });
         createPeer(peerId, displayName, true);
       });
-    });
+    };
 
-    socket.on("video-peer-joined", ({ peerId, name }) => {
-      if (!joined || peerId === socket.id) return;
+    const handlePeerJoined = ({ peerId, name }) => {
+      const activeSocket = getSocket();
+      if (!joined || !activeSocket || peerId === activeSocket.id) return;
       const displayName = name || `Guest-${peerId.slice(-4)}`;
       peerNames.set(peerId, displayName);
       upsertParticipant(peerId, {
@@ -1464,15 +1689,15 @@
         media: "Connecting...",
       });
       log(`${displayName} joined the room.`);
-    });
+    };
 
-    socket.on("video-peer-left", ({ peerId, name }) => {
+    const handlePeerLeft = ({ peerId, name }) => {
       const displayName = name || peerNames.get(peerId) || "Guest";
       removePeer(peerId);
       log(`${displayName} left the room.`);
-    });
+    };
 
-    socket.on("video-offer", async ({ from, description }) => {
+    const handleOffer = async ({ from, description }) => {
       if (!joined || !localStream) return;
       let pc = peers.get(from);
       if (!pc) {
@@ -1482,16 +1707,19 @@
       await pc.setRemoteDescription(description);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      socket.emit("video-answer", { to: from, description: pc.localDescription });
-    });
+      const activeSocket = getSocket();
+      if (activeSocket) {
+        activeSocket.emit("video-answer", { to: from, description: pc.localDescription });
+      }
+    };
 
-    socket.on("video-answer", async ({ from, description }) => {
+    const handleAnswer = async ({ from, description }) => {
       const pc = peers.get(from);
       if (!pc) return;
       await pc.setRemoteDescription(description);
-    });
+    };
 
-    socket.on("video-ice-candidate", async ({ from, candidate }) => {
+    const handleIceCandidate = async ({ from, candidate }) => {
       const pc = peers.get(from);
       if (!pc || !candidate) return;
       try {
@@ -1499,7 +1727,27 @@
       } catch (err) {
         console.error("Failed to add ICE candidate", err);
       }
-    });
+    };
+
+    const attachSocketHandlers = (nextSocket) => {
+      if (!nextSocket || typeof nextSocket.on !== "function") return;
+      if (state.boundSocket === nextSocket) return;
+      state.boundSocket = nextSocket;
+      nextSocket.on("disconnect", leaveRoom);
+      nextSocket.on("video-existing-peers", handleExistingPeers);
+      nextSocket.on("video-peer-joined", handlePeerJoined);
+      nextSocket.on("video-peer-left", handlePeerLeft);
+      nextSocket.on("video-offer", handleOffer);
+      nextSocket.on("video-answer", handleAnswer);
+      nextSocket.on("video-ice-candidate", handleIceCandidate);
+    };
+
+    state.setSocket = (nextSocket) => {
+      state.socket = nextSocket;
+      attachSocketHandlers(nextSocket);
+    };
+
+    state.setSocket(socket);
 
     function createPeer(peerId, name, shouldOffer) {
       if (!localStream) return null;
@@ -1509,10 +1757,13 @@
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          socket.emit("video-ice-candidate", {
-            to: peerId,
-            candidate: event.candidate,
-          });
+          const activeSocket = getSocket();
+          if (activeSocket) {
+            activeSocket.emit("video-ice-candidate", {
+              to: peerId,
+              candidate: event.candidate,
+            });
+          }
         }
       };
 
@@ -1543,10 +1794,13 @@
         pc.createOffer()
           .then((offer) => pc.setLocalDescription(offer))
           .then(() => {
-            socket.emit("video-offer", {
-              to: peerId,
-              description: pc.localDescription,
-            });
+            const activeSocket = getSocket();
+            if (activeSocket) {
+              activeSocket.emit("video-offer", {
+                to: peerId,
+                description: pc.localDescription,
+              });
+            }
           })
           .catch((err) => console.error("Offer error", err));
       }
