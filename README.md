@@ -38,4 +38,7 @@ Note: The Android app loads the same domain as the web app, meaning updates to y
 Deployment
 Lurk is hosted using Render and automatically redeploys when changes are pushed to this GitHub repository.
 
+Scaling
+See `SCALING.md` for multi-instance and real-time scaling guidance.
+
 

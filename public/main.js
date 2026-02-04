@@ -207,7 +207,14 @@
     const roomInput = document.getElementById("chat-room-entry");
     const visibilityToggle = document.getElementById("chat-room-visibility");
     const lobbyBtn = document.getElementById("chat-room-lobby");
-    const createBtn = document.getElementById("chat-room-create");
+    const newBtn = document.getElementById("chat-room-new");
+    const newPanel = document.getElementById("chat-room-new-panel");
+    const newCancelBtn = document.getElementById("chat-room-new-cancel");
+    const newCreateBtn = document.getElementById("chat-room-new-create");
+    const newNameInput = document.getElementById("chat-room-new-name");
+    const newPublicBtn = document.getElementById("chat-room-new-public");
+    const newPrivateBtn = document.getElementById("chat-room-new-private");
+    const newHint = document.getElementById("chat-room-new-hint");
     const copyBtn = document.getElementById("chat-room-copy");
     const status = document.getElementById("chat-room-status");
     const help = document.getElementById("chat-room-help");
@@ -217,7 +224,7 @@
       !roomInput ||
       !visibilityToggle ||
       !lobbyBtn ||
-      !createBtn ||
+      !newBtn ||
       !copyBtn ||
       !status ||
       !help
@@ -225,10 +232,23 @@
       return;
     }
 
+    const hasNewPanel = Boolean(
+      newPanel &&
+        newCancelBtn &&
+        newCreateBtn &&
+        newNameInput &&
+        newPublicBtn &&
+        newPrivateBtn &&
+        newHint
+    );
+
     let resetTimer = null;
     let publicValue = "";
     let privateValue = "";
     let currentVisibility = window.__lurkRoomVisibility || "public";
+    let newRoomVisibility = "public";
+    let newPublicValue = "";
+    let newPrivateValue = "";
 
     const setVisibilityUi = (visibility) => {
       currentVisibility = visibility;
@@ -244,7 +264,6 @@
       roomInput.placeholder = isPrivate ? "Enter invite code" : "Lobby";
       roomInput.maxLength = isPrivate ? 12 : 24;
       lobbyBtn.hidden = isPrivate;
-      createBtn.hidden = !isPrivate;
       copyBtn.hidden = !isPrivate;
       if (publicList) {
         publicList.hidden = isPrivate;
@@ -254,8 +273,8 @@
         controls.dataset.visibility = visibility;
       }
       help.textContent = isPrivate
-        ? "Private rooms need an invite code. Create one to share with friends."
-        : "Public rooms show up for everyone. Leave it blank to join the lobby.";
+        ? "Private rooms need an invite code. Use New Room to generate one."
+        : "Public rooms show up for everyone. Use New Room to create one or leave it blank to join the lobby.";
     };
 
     const updateUi = (code, visibility) => {
@@ -351,10 +370,102 @@
     });
 
     lobbyBtn.addEventListener("click", () => applyRoom("", "public"));
-    createBtn.addEventListener("click", () => {
-      const code = generateRoomCode();
-      applyRoom(code, "private");
+
+    const setNewRoomVisibility = (visibility) => {
+      if (!hasNewPanel) return;
+      const nextVisibility = visibility === "private" ? "private" : "public";
+      const isPrivate = nextVisibility === "private";
+      if (nextVisibility !== newRoomVisibility) {
+        if (isPrivate) {
+          newPublicValue = newNameInput.value;
+          newNameInput.value = newPrivateValue;
+        } else {
+          newPrivateValue = newNameInput.value;
+          newNameInput.value = newPublicValue;
+        }
+      }
+      newRoomVisibility = nextVisibility;
+      newPublicBtn.classList.toggle("is-active", !isPrivate);
+      newPublicBtn.setAttribute("aria-pressed", isPrivate ? "false" : "true");
+      newPrivateBtn.classList.toggle("is-active", isPrivate);
+      newPrivateBtn.setAttribute("aria-pressed", isPrivate ? "true" : "false");
+      newNameInput.placeholder = isPrivate
+        ? "Invite code (optional)"
+        : "Room name";
+      newNameInput.maxLength = isPrivate ? 12 : 24;
+      newHint.textContent = isPrivate
+        ? "Private rooms use an invite code. Leave it blank to generate one."
+        : "Public rooms appear in the list for everyone.";
+    };
+
+    const openNewRoomPanel = () => {
+      if (!hasNewPanel) return;
+      setNewRoomVisibility(currentVisibility || "public");
+      newPanel.hidden = false;
+      newPanel.setAttribute("aria-hidden", "false");
+      newBtn.setAttribute("aria-expanded", "true");
+      newNameInput.focus();
+      newNameInput.select();
+    };
+
+    const closeNewRoomPanel = () => {
+      if (!hasNewPanel) return;
+      newPanel.hidden = true;
+      newPanel.setAttribute("aria-hidden", "true");
+      newBtn.setAttribute("aria-expanded", "false");
+    };
+
+    newBtn.addEventListener("click", () => {
+      if (!hasNewPanel) return;
+      if (newPanel.hidden) {
+        openNewRoomPanel();
+      } else {
+        closeNewRoomPanel();
+      }
     });
+
+    if (hasNewPanel) {
+      newCancelBtn.addEventListener("click", closeNewRoomPanel);
+      newPublicBtn.addEventListener("click", () => setNewRoomVisibility("public"));
+      newPrivateBtn.addEventListener("click", () =>
+        setNewRoomVisibility("private")
+      );
+      newCreateBtn.addEventListener("click", () => {
+        const visibility = newRoomVisibility;
+        let code =
+          visibility === "private"
+            ? normalizePrivateCode(newNameInput.value)
+            : normalizePublicName(newNameInput.value);
+        if (visibility === "public" && !code) {
+          flashStatus("Enter a public room name to create.");
+          newNameInput.focus();
+          return;
+        }
+        if (visibility === "private" && !code) {
+          code = generateRoomCode();
+        }
+        applyRoom(code, visibility);
+        closeNewRoomPanel();
+      });
+      newNameInput.addEventListener("input", () => {
+        if (newRoomVisibility === "private") {
+          newPrivateValue = newNameInput.value;
+        } else {
+          newPublicValue = newNameInput.value;
+        }
+      });
+      newNameInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          newCreateBtn.click();
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeNewRoomPanel();
+        }
+      });
+    }
+
     copyBtn.addEventListener("click", async () => {
       const code = window.__lurkRoomCode || "";
       if (!code || window.__lurkRoomVisibility !== "private") return;
@@ -382,6 +493,9 @@
 
     window.addEventListener("lurk-room-change", (event) => {
       updateUi(event?.detail?.code || "", event?.detail?.visibility);
+      if (hasNewPanel && !newPanel.hidden) {
+        closeNewRoomPanel();
+      }
     });
 
     window.__lurkApplyRoomFromControls = applySelection;

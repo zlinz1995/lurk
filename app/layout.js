@@ -120,12 +120,73 @@ export default function RootLayout({ children }) {
                   <button type="button" id="chat-room-lobby" className="chat-room-button">
                     Lobby
                   </button>
-                  <button type="button" id="chat-room-create" className="chat-room-button">
-                    Create invite
+                  <button
+                    type="button"
+                    id="chat-room-new"
+                    className="chat-room-button chat-room-new-trigger"
+                    aria-expanded="false"
+                    aria-controls="chat-room-new-panel"
+                  >
+                    New Room
                   </button>
                   <button type="button" id="chat-room-copy" className="chat-room-button" disabled>
                     Copy link
                   </button>
+                </div>
+                <div
+                  id="chat-room-new-panel"
+                  className="chat-room-new-panel"
+                  hidden
+                  aria-hidden="true"
+                >
+                  <div className="chat-room-new-header">
+                    <span className="chat-room-new-title">Create a new room</span>
+                    <button
+                      type="button"
+                      id="chat-room-new-cancel"
+                      className="chat-room-button chat-room-new-cancel"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="chat-room-new-choice">
+                    <button
+                      type="button"
+                      id="chat-room-new-public"
+                      className="chat-room-button chat-room-choice is-active"
+                      aria-pressed="true"
+                    >
+                      Public
+                    </button>
+                    <button
+                      type="button"
+                      id="chat-room-new-private"
+                      className="chat-room-button chat-room-choice"
+                      aria-pressed="false"
+                    >
+                      Private
+                    </button>
+                  </div>
+                  <div className="chat-room-row chat-room-row-compact chat-room-new-input-row">
+                    <input
+                      id="chat-room-new-name"
+                      type="text"
+                      className="chat-room-input chat-room-new-input"
+                      maxLength={24}
+                      placeholder="Room name"
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      id="chat-room-new-create"
+                      className="chat-room-button chat-room-new-create"
+                    >
+                      Create
+                    </button>
+                  </div>
+                  <p id="chat-room-new-hint" className="chat-room-help chat-room-new-hint">
+                    Public rooms appear in the list for everyone.
+                  </p>
                 </div>
                 <p id="chat-room-help" className="chat-room-help">
                   Public rooms show up for everyone. Leave it blank to join the lobby.
