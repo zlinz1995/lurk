@@ -39,6 +39,9 @@ self.addEventListener('fetch', (event) => {
   const isSocket = url.pathname.startsWith('/socket.io/');
   const isApi =
     url.pathname.startsWith('/threads') ||
+    url.pathname.startsWith('/auth') ||
+    url.pathname.startsWith('/admin') ||
+    url.pathname.startsWith('/users') ||
     url.pathname.startsWith('/reports') ||
     url.pathname.startsWith('/uploads') ||
     url.pathname.startsWith('/health') ||

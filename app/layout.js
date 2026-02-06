@@ -2,6 +2,8 @@
 
 import "./globals.css";
 import { resolveApiBase } from "./src/resolveApiBase.js";
+import ChatShell from "../components/ChatShell.jsx";
+import NavIconBar from "../components/NavIconBar.jsx";
 
 export const metadata = {
   title: "Lurk",
@@ -23,6 +25,7 @@ export default function RootLayout({ children }) {
       data-native-api-base={nativeApiBase || undefined}
     >
       <body>
+        <NavIconBar />
         <div className="ambient-video" id="chat-video-ambient" aria-hidden="true">
           <video
             id="chat-video-ambient-source"
@@ -327,5 +330,4 @@ export default function RootLayout({ children }) {
     </html>
   );
 }
-import ChatShell from "../components/ChatShell.jsx";
 

@@ -4,10 +4,19 @@ import http from "http";
 import express from "express";
 import { createRequire } from "module";
 import { loadEnv } from "./config/env.js";
-import { attachApiLayer } from "./lurkApi.js";
-import quantumRoutes from "./routes/quantum.js";
 
 loadEnv();
+
+console.log("GOOGLE ENV CHECK", {
+  id: process.env.GOOGLE_CLIENT_ID,
+  secret: process.env.GOOGLE_CLIENT_SECRET,
+  redirect: process.env.GOOGLE_REDIRECT_URI,
+});
+
+const [{ attachApiLayer }, { default: quantumRoutes }] = await Promise.all([
+  import("./lurkApi.js"),
+  import("./routes/quantum.js"),
+]);
 
 const PORT = process.env.PORT || process.env.API_PORT || 4000;
 const dev = process.env.NODE_ENV !== "production";

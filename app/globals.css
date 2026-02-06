@@ -1,4 +1,4 @@
-@import "../.next-dev/styles.css";
+@import "../public/styles.css";
 
 /* Minimal fallbacks if the import ever fails */
 html, body {

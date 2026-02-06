@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "updatedAt": "2026-02-05T00:00:00Z",
+  "games": [
+    {
+      "id": "pong",
+      "title": "Neon Pong",
+      "description": "Classic pong with a neon Lurk twist. First to 7 wins.",
+      "author": "Lurk",
+      "path": "/playables-assets/pong/index.html",
+      "thumbnail": "/playables-assets/pong/thumb.svg",
+      "orientation": "landscape",
+      "minPlayers": 1,
+      "maxPlayers": 1,
+      "tags": ["arcade", "classic", "reflex"]
+    }
+  ]
+}

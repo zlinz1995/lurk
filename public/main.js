@@ -83,6 +83,7 @@
   onReady(() => {
     setupRoomControls();
     wireDisplayNameSync(defaultName);
+    hydrateAccountProfile(defaultName);
     setupPublicRoomList(null);
     setupTextChat(null, defaultName);
     setupVideoChat(null, defaultName);
@@ -199,6 +200,32 @@
         input.blur();
       }
     });
+  }
+
+  function hydrateAccountProfile(fallbackName) {
+    const input = document.getElementById("chat-video-name");
+    if (!input) return;
+    const token = getStoredAuthToken();
+    const sameOrigin = isApiSameOrigin();
+    if (!token && !sameOrigin) return;
+
+    fetch(apiPath("/auth/me"), {
+      method: "GET",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      credentials: sameOrigin ? "include" : "omit",
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const displayName = data?.user?.displayName || "";
+        if (!displayName) return;
+        const current = input.value.trim();
+        if (!current || current === fallbackName) {
+          input.value = displayName;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        window.__lurkProfile = data?.user || null;
+      })
+      .catch(() => {});
   }
 
   function setupRoomControls() {
@@ -2056,6 +2083,23 @@
       return trimmed;
     } catch {
       return "";
+    }
+  }
+
+  function getStoredAuthToken() {
+    try {
+      return window.localStorage?.getItem("lurkAuthToken") || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function isApiSameOrigin() {
+    if (!API_BASE) return true;
+    try {
+      return new URL(API_BASE).origin === window.location.origin;
+    } catch {
+      return true;
     }
   }
 

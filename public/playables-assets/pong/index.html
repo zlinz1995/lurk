@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neon Pong</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="game-shell">
+      <header class="game-header">
+        <div>
+          <div class="game-title">Neon Pong</div>
+          <div class="game-subtitle">First to 7 wins</div>
+        </div>
+        <div class="game-hints">
+          <span>Move: W/S or ↑/↓</span>
+          <span>Pointer: Drag on the court</span>
+        </div>
+      </header>
+
+      <div class="game-canvas-wrap">
+        <canvas id="pong-canvas" aria-label="Pong game canvas"></canvas>
+        <div class="game-overlay" id="game-overlay" aria-live="polite">
+          <div class="game-overlay-title" id="overlay-title">Ready?</div>
+          <div class="game-overlay-text" id="overlay-text">
+            Press start or tap the court.
+          </div>
+          <button class="game-btn" id="overlay-start">Start</button>
+        </div>
+      </div>
+
+      <footer class="game-footer">
+        <div class="game-score" id="score-display">0 : 0</div>
+        <div class="game-controls">
+          <button class="game-btn" id="start-btn">Start</button>
+          <button class="game-btn ghost" id="pause-btn">Pause</button>
+          <button class="game-btn ghost" id="reset-btn">Reset</button>
+        </div>
+        <div class="game-status" id="status-text">Awaiting kickoff.</div>
+      </footer>
+    </div>
+
+    <script src="/playables/sdk.js"></script>
+    <script src="game.js"></script>
+  </body>
+</html>
