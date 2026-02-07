@@ -277,6 +277,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   const db = new Database(DB_PATH);
   db.pragma("busy_timeout = 5000");
   prepareSchema(db);
+  runAdminBootstrap(db);
   const runHousekeeping = () => {
     purgeExpiredThreads(db);
     purgeExpiredAuthSessions(db);
@@ -314,10 +315,26 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
 
   let sockets = null;
 
-  const requireAdmin = (req, res) => {
+  const requireSession = (req, res) => {
     const session = getSessionFromRequest(req, db);
     if (!session) {
       res.status(401).json({ error: "unauthenticated" });
+      return null;
+    }
+    const access = getUserAccessById(db, session.user.id);
+    if (!access.allowed) {
+      res.status(403).json({
+        error: access.reason || "access_denied",
+        until: access.until || null,
+      });
+      return null;
+    }
+    return session;
+  };
+
+  const requireAdmin = (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) {
       return null;
     }
     const userRow = db
@@ -333,6 +350,152 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       return null;
     }
     return { session, userRow };
+  };
+
+  const requireAdminPermission = (req, res, permissionKey) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return null;
+    const settings = getAdminSettingsState(db).settings;
+    if (permissionKey && !settings?.[permissionKey]) {
+      res.status(403).json({ error: "admin_setting_disabled" });
+      return null;
+    }
+    return { admin, settings };
+  };
+
+  const requireAdminReason = (settings, res, reason) => {
+    if (settings?.admin_mandatory_reason_codes && !reason) {
+      res.status(400).json({ error: "reason_required" });
+      return false;
+    }
+    return true;
+  };
+
+  const parseTargetUserId = (req, res) => {
+    const userId = Number.parseInt(req?.params?.id, 10);
+    if (!Number.isFinite(userId)) {
+      res.status(400).json({ error: "invalid_user_id" });
+      return null;
+    }
+    return userId;
+  };
+
+  const loadUserForAdmin = (userId) =>
+    db
+      .prepare(
+        `SELECT id,
+                email,
+                display_name,
+                avatar_url,
+                bio,
+                created_at,
+                email_verified,
+                email_verified_at,
+                is_admin,
+                is_suspended,
+                suspended_until,
+                suspended_reason,
+                is_banned,
+                banned_at,
+                banned_reason,
+                shadow_restricted,
+                trust_override,
+                trust_override_reason,
+                trust_override_at
+         FROM users
+         WHERE id = ?`
+      )
+      .get(userId);
+
+  const requireTargetUser = (req, res) => {
+    const userId = parseTargetUserId(req, res);
+    if (!userId) return null;
+    const userRow = loadUserForAdmin(userId);
+    if (!userRow) {
+      res.status(404).json({ error: "user_not_found" });
+      return null;
+    }
+    return { userId, userRow };
+  };
+
+  const parseThreadId = (req, res) => {
+    const threadId = Number.parseInt(req?.params?.id, 10);
+    if (!Number.isFinite(threadId)) {
+      res.status(400).json({ error: "invalid_thread_id" });
+      return null;
+    }
+    return threadId;
+  };
+
+  const loadThreadForAdmin = (threadId) =>
+    db
+      .prepare(
+        `SELECT id,
+                title,
+                body,
+                image_filename,
+                sensitive,
+                created_at,
+                is_deleted,
+                deleted_at,
+                deleted_by,
+                deleted_reason,
+                is_frozen,
+                frozen_at,
+                frozen_by,
+                frozen_reason
+         FROM threads
+         WHERE id = ?`
+      )
+      .get(threadId);
+
+  const requireThread = (req, res) => {
+    const threadId = parseThreadId(req, res);
+    if (!threadId) return null;
+    const row = loadThreadForAdmin(threadId);
+    if (!row) {
+      res.status(404).json({ error: "thread_not_found" });
+      return null;
+    }
+    return { threadId, row };
+  };
+
+  const parsePostId = (req, res) => {
+    const postId = Number.parseInt(req?.params?.id, 10);
+    if (!Number.isFinite(postId)) {
+      res.status(400).json({ error: "invalid_post_id" });
+      return null;
+    }
+    return postId;
+  };
+
+  const loadPostForAdmin = (postId) =>
+    db
+      .prepare(
+        `SELECT id,
+                thread_id,
+                body,
+                image_filename,
+                sensitive,
+                created_at,
+                is_deleted,
+                deleted_at,
+                deleted_by,
+                deleted_reason
+         FROM posts
+         WHERE id = ?`
+      )
+      .get(postId);
+
+  const requirePost = (req, res) => {
+    const postId = parsePostId(req, res);
+    if (!postId) return null;
+    const row = loadPostForAdmin(postId);
+    if (!row) {
+      res.status(404).json({ error: "post_not_found" });
+      return null;
+    }
+    return { postId, row };
   };
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -357,11 +520,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   });
 
   app.get("/auth/me", authLimiter, (req, res) => {
-    const session = getSessionFromRequest(req, db);
-    if (!session) {
-      res.status(401).json({ error: "unauthenticated" });
-      return;
-    }
+    const session = requireSession(req, res);
+    if (!session) return;
     const userRow = db
       .prepare(
         `SELECT email_verified, avatar_url, bio, is_admin
@@ -480,7 +640,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
 
     const row = db
       .prepare(
-        `SELECT id, email, display_name, password_hash, email_verified, avatar_url, bio, is_admin
+        `SELECT id, email, display_name, password_hash, email_verified, avatar_url, bio, is_admin,
+                is_banned, is_suspended, suspended_until
          FROM users WHERE email = ?`
       )
       .get(email);
@@ -497,6 +658,11 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       return;
     }
 
+    const access = resolveUserAccess(db, row);
+    if (!access.allowed) {
+      res.status(403).json({ error: access.reason, until: access.until || null });
+      return;
+    }
     const isAdmin = ensureAdminFlag(db, row, dev);
     const session = createSession(db, row.id);
     setSessionCookie(res, session.token, {
@@ -527,11 +693,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   });
 
   app.patch("/auth/profile", authLimiter, (req, res) => {
-    const session = getSessionFromRequest(req, db);
-    if (!session) {
-      res.status(401).json({ error: "unauthenticated" });
-      return;
-    }
+    const session = requireSession(req, res);
+    if (!session) return;
     const displayName = sanitizeDisplayName(req?.body?.displayName || "");
     const avatarUrl = sanitizeAvatarUrl(req?.body?.avatarUrl || "");
     const bio = sanitizeBio(req?.body?.bio || "");
@@ -568,11 +731,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   });
 
   app.get("/auth/settings", authLimiter, (req, res) => {
-    const session = getSessionFromRequest(req, db);
-    if (!session) {
-      res.status(401).json({ error: "unauthenticated" });
-      return;
-    }
+    const session = requireSession(req, res);
+    if (!session) return;
     const state = getUserSettingsState(db, session.user.id);
     res.json({
       settings: state.settings,
@@ -581,11 +741,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   });
 
   app.patch("/auth/settings", authLimiter, (req, res) => {
-    const session = getSessionFromRequest(req, db);
-    if (!session) {
-      res.status(401).json({ error: "unauthenticated" });
-      return;
-    }
+    const session = requireSession(req, res);
+    if (!session) return;
     const patch = req?.body?.settings || {};
     const sanitized = sanitizeUserSettings(patch);
     const keys = Object.keys(sanitized);
@@ -601,11 +758,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   });
 
   app.post("/auth/profile/avatar", authLimiter, (req, res) => {
-    const session = getSessionFromRequest(req, db);
-    if (!session) {
-      res.status(401).json({ error: "unauthenticated" });
-      return;
-    }
+    const session = requireSession(req, res);
+    if (!session) return;
     const adminSettings = getAdminSettingsState(db).settings;
     const userRow = db
       .prepare(`SELECT id, email, display_name, is_admin FROM users WHERE id = ?`)
@@ -813,6 +967,608 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     }
     const limit = clampInt(req?.query?.limit, 1, 200) ?? 50;
     res.json({ actions: getAdminActions(db, limit) });
+  });
+
+  app.get("/admin/users", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_view_private_metadata");
+    if (!ctx) return;
+    const limit = clampInt(req?.query?.limit, 1, 500) ?? 200;
+    const offset = clampInt(req?.query?.offset, 0, 50_000) ?? 0;
+    const totalRow = db.prepare(`SELECT COUNT(*) as total FROM users`).get();
+    const rows = db
+      .prepare(
+        `SELECT id,
+                email,
+                display_name,
+                created_at,
+                is_admin
+         FROM users
+         ORDER BY datetime(created_at) DESC
+         LIMIT ?
+         OFFSET ?`
+      )
+      .all(limit, offset);
+    res.json({
+      total: totalRow?.total ?? rows.length,
+      users: rows.map((row) => ({
+        id: row.id,
+        email: row.email || "",
+        displayName: row.display_name || "",
+        createdAt: row.created_at,
+        isAdmin: Boolean(row.is_admin),
+      })),
+    });
+  });
+
+  app.get("/admin/users/:id", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_view_private_metadata");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const sessions = db
+      .prepare(
+        `SELECT COUNT(*) as count
+         FROM sessions
+         WHERE user_id = ?
+           AND datetime(expires_at) > datetime('now')`
+      )
+      .get(target.userId);
+    res.json({
+      user: {
+        id: target.userRow.id,
+        email: target.userRow.email,
+        displayName: target.userRow.display_name || "",
+        avatarUrl: resolveAvatarUrlForResponse(req, target.userRow.avatar_url || ""),
+        bio: target.userRow.bio || "",
+        createdAt: target.userRow.created_at,
+        emailVerified: Boolean(target.userRow.email_verified),
+        emailVerifiedAt: target.userRow.email_verified_at || null,
+        isAdmin: Boolean(target.userRow.is_admin),
+        isSuspended: Boolean(target.userRow.is_suspended),
+        suspendedUntil: target.userRow.suspended_until || null,
+        suspendedReason: target.userRow.suspended_reason || "",
+        isBanned: Boolean(target.userRow.is_banned),
+        bannedAt: target.userRow.banned_at || null,
+        bannedReason: target.userRow.banned_reason || "",
+        shadowRestricted: Boolean(target.userRow.shadow_restricted),
+        trustOverride: target.userRow.trust_override || "",
+        trustOverrideReason: target.userRow.trust_override_reason || "",
+        trustOverrideAt: target.userRow.trust_override_at || null,
+        activeSessions: sessions?.count ?? 0,
+      },
+    });
+  });
+
+  app.get("/admin/users/:id/actions", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_view_moderation_history");
+    if (!ctx) return;
+    if (!ctx.settings.admin_view_actions) {
+      res.status(403).json({ error: "admin_actions_disabled" });
+      return;
+    }
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const limit = clampInt(req?.query?.limit, 1, 200) ?? 50;
+    res.json({ actions: getAdminActionsForUser(db, target.userId, limit) });
+  });
+
+  app.get("/admin/users/:id/risk-flags", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_risk_flags");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const includeResolved = parseBoolean(req?.query?.includeResolved, false);
+    const rows = db
+      .prepare(
+        `SELECT id,
+                flag,
+                level,
+                note,
+                created_at,
+                created_by,
+                resolved_at,
+                resolved_by
+         FROM user_risk_flags
+         WHERE user_id = ?
+           AND (? OR resolved_at IS NULL)
+         ORDER BY datetime(created_at) DESC`
+      )
+      .all(target.userId, includeResolved ? 1 : 0);
+    res.json({ flags: rows });
+  });
+
+  app.post("/admin/users/:id/risk-flags", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_risk_flags");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const flag = sanitizeRiskFlag(req?.body?.flag || "");
+    if (!flag) {
+      res.status(400).json({ error: "invalid_flag" });
+      return;
+    }
+    const level = String(req?.body?.level || "").trim().slice(0, 40);
+    const note = String(req?.body?.note || "").trim().slice(0, 240);
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `INSERT INTO user_risk_flags (user_id, flag, level, note, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(target.userId, flag, level || null, note || null, now, ctx.admin.userRow.id);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.risk_flag.add",
+      detail: { flag, level },
+      reason,
+    });
+    res.json({ ok: true, id: result.lastInsertRowid });
+  });
+
+  app.post("/admin/users/:id/risk-flags/:flagId/resolve", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_risk_flags");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const flagId = Number.parseInt(req?.params?.flagId, 10);
+    if (!Number.isFinite(flagId)) {
+      res.status(400).json({ error: "invalid_flag_id" });
+      return;
+    }
+    const row = db
+      .prepare(
+        `SELECT id, flag, level, resolved_at
+         FROM user_risk_flags
+         WHERE id = ? AND user_id = ?`
+      )
+      .get(flagId, target.userId);
+    if (!row) {
+      res.status(404).json({ error: "flag_not_found" });
+      return;
+    }
+    if (row.resolved_at) {
+      res.json({ ok: true, alreadyResolved: true });
+      return;
+    }
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE user_risk_flags
+       SET resolved_at = ?, resolved_by = ?
+       WHERE id = ?`
+    ).run(now, ctx.admin.userRow.id, flagId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.risk_flag.resolve",
+      detail: { flagId, flag: row.flag, level: row.level },
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/users/:id/trust-override", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_risk_flags");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const override = sanitizeTrustOverride(req?.body?.level || "");
+    const now = override ? new Date().toISOString() : null;
+    db.prepare(
+      `UPDATE users
+       SET trust_override = ?,
+           trust_override_reason = ?,
+           trust_override_at = ?
+       WHERE id = ?`
+    ).run(override || null, reason || null, now, target.userId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.trust_override",
+      detail: { level: override || "none" },
+      reason,
+    });
+    res.json({ ok: true, level: override || "" });
+  });
+
+  app.post("/admin/users/:id/suspend", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_suspend");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    if (ctx.admin.userRow.id === target.userId) {
+      res.status(400).json({ error: "cannot_suspend_self" });
+      return;
+    }
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const untilIso = parseIsoDate(req?.body?.until);
+    if (req?.body?.until && !untilIso) {
+      res.status(400).json({ error: "invalid_suspension_until" });
+      return;
+    }
+    if (untilIso && Date.parse(untilIso) <= Date.now()) {
+      res.status(400).json({ error: "suspension_until_in_past" });
+      return;
+    }
+    db.prepare(
+      `UPDATE users
+       SET is_suspended = 1,
+           suspended_until = ?,
+           suspended_reason = ?
+       WHERE id = ?`
+    ).run(untilIso || null, reason || null, target.userId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.suspend",
+      detail: { until: untilIso || null },
+      reason,
+    });
+    res.json({ ok: true, suspendedUntil: untilIso || null });
+  });
+
+  app.post("/admin/users/:id/unsuspend", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_suspend");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    db.prepare(
+      `UPDATE users
+       SET is_suspended = 0,
+           suspended_until = NULL,
+           suspended_reason = NULL
+       WHERE id = ?`
+    ).run(target.userId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.unsuspend",
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/users/:id/ban", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_permanent_bans");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    if (ctx.admin.userRow.id === target.userId) {
+      res.status(400).json({ error: "cannot_ban_self" });
+      return;
+    }
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE users
+       SET is_banned = 1,
+           banned_at = ?,
+           banned_reason = ?
+       WHERE id = ?`
+    ).run(now, reason || null, target.userId);
+    const sessionsCleared = db
+      .prepare(`DELETE FROM sessions WHERE user_id = ?`)
+      .run(target.userId).changes;
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.ban",
+      detail: { sessionsCleared },
+      reason,
+    });
+    res.json({ ok: true, sessionsCleared });
+  });
+
+  app.post("/admin/users/:id/unban", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_permanent_bans");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    db.prepare(
+      `UPDATE users
+       SET is_banned = 0,
+           banned_at = NULL,
+           banned_reason = NULL
+       WHERE id = ?`
+    ).run(target.userId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.unban",
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/users/:id/shadow-restrict", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_shadow_restrict");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    db.prepare(`UPDATE users SET shadow_restricted = 1 WHERE id = ?`).run(
+      target.userId
+    );
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.shadow_restrict",
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/users/:id/shadow-unrestrict", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_shadow_restrict");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    db.prepare(`UPDATE users SET shadow_restricted = 0 WHERE id = ?`).run(
+      target.userId
+    );
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.shadow_unrestrict",
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/users/:id/force-logout", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_force_logout");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const result = db
+      .prepare(`DELETE FROM sessions WHERE user_id = ?`)
+      .run(target.userId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.force_logout",
+      detail: { sessionsCleared: result.changes ?? 0 },
+      reason,
+    });
+    res.json({ ok: true, sessionsCleared: result.changes ?? 0 });
+  });
+
+  app.post("/admin/users/:id/reset-profile", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_reset_profile");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const requestedName = sanitizeDisplayName(req?.body?.displayName || "");
+    const displayName =
+      requestedName && requestedName !== "Guest"
+        ? requestedName
+        : `User${target.userId}`;
+    db.prepare(
+      `UPDATE users
+       SET display_name = ?,
+           avatar_url = NULL,
+           bio = NULL
+       WHERE id = ?`
+    ).run(displayName, target.userId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.reset_profile",
+      detail: { displayName },
+      reason,
+    });
+    res.json({ ok: true, displayName });
+  });
+
+  app.post("/admin/users/:id/verify", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_verify_accounts");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE users
+       SET email_verified = 1,
+           email_verified_at = ?
+       WHERE id = ?`
+    ).run(now, target.userId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.verify",
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/users/:id/unverify", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_verify_accounts");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    db.prepare(
+      `UPDATE users
+       SET email_verified = 0,
+           email_verified_at = NULL
+       WHERE id = ?`
+    ).run(target.userId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      targetUserId: target.userId,
+      action: "user.unverify",
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/threads/:id/delete", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "content_remove");
+    if (!ctx) return;
+    const target = requireThread(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE threads
+       SET is_deleted = 1,
+           deleted_at = ?,
+           deleted_by = ?,
+           deleted_reason = ?
+       WHERE id = ?`
+    ).run(now, ctx.admin.userRow.id, reason || null, target.threadId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      action: "content.thread.delete",
+      detail: { threadId: target.threadId },
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/threads/:id/restore", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "content_restore");
+    if (!ctx) return;
+    const target = requireThread(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    db.prepare(
+      `UPDATE threads
+       SET is_deleted = 0,
+           deleted_at = NULL,
+           deleted_by = NULL,
+           deleted_reason = NULL
+       WHERE id = ?`
+    ).run(target.threadId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      action: "content.thread.restore",
+      detail: { threadId: target.threadId },
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/threads/:id/freeze", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "content_freeze_threads");
+    if (!ctx) return;
+    const target = requireThread(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE threads
+       SET is_frozen = 1,
+           frozen_at = ?,
+           frozen_by = ?,
+           frozen_reason = ?
+       WHERE id = ?`
+    ).run(now, ctx.admin.userRow.id, reason || null, target.threadId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      action: "content.thread.freeze",
+      detail: { threadId: target.threadId },
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/threads/:id/unfreeze", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "content_freeze_threads");
+    if (!ctx) return;
+    const target = requireThread(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    db.prepare(
+      `UPDATE threads
+       SET is_frozen = 0,
+           frozen_at = NULL,
+           frozen_by = NULL,
+           frozen_reason = NULL
+       WHERE id = ?`
+    ).run(target.threadId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      action: "content.thread.unfreeze",
+      detail: { threadId: target.threadId },
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/posts/:id/delete", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "content_remove");
+    if (!ctx) return;
+    const target = requirePost(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE posts
+       SET is_deleted = 1,
+           deleted_at = ?,
+           deleted_by = ?,
+           deleted_reason = ?
+       WHERE id = ?`
+    ).run(now, ctx.admin.userRow.id, reason || null, target.postId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      action: "content.post.delete",
+      detail: { postId: target.postId, threadId: target.row.thread_id },
+      reason,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/admin/posts/:id/restore", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "content_restore");
+    if (!ctx) return;
+    const target = requirePost(req, res);
+    if (!target) return;
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    db.prepare(
+      `UPDATE posts
+       SET is_deleted = 0,
+           deleted_at = NULL,
+           deleted_by = NULL,
+           deleted_reason = NULL
+       WHERE id = ?`
+    ).run(target.postId);
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      action: "content.post.restore",
+      detail: { postId: target.postId, threadId: target.row.thread_id },
+      reason,
+    });
+    res.json({ ok: true });
   });
 
   app.post("/auth/verify/resend", authLimiter, (req, res) => {
@@ -1098,7 +1854,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const avatarUrl = sanitizeAvatarUrl(profile?.picture || "");
     let userRow = db
       .prepare(
-        `SELECT u.id, u.email, u.display_name, u.avatar_url
+        `SELECT u.id, u.email, u.display_name, u.avatar_url, u.is_banned, u.is_suspended, u.suspended_until
          FROM oauth_accounts oa
          JOIN users u ON u.id = oa.user_id
          WHERE oa.provider = ? AND oa.provider_user_id = ?`
@@ -1107,7 +1863,10 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
 
     if (!userRow) {
       const existingUser = db
-        .prepare(`SELECT id, email, display_name, avatar_url FROM users WHERE email = ?`)
+        .prepare(
+          `SELECT id, email, display_name, avatar_url, is_banned, is_suspended, suspended_until
+           FROM users WHERE email = ?`
+        )
         .get(email);
       if (existingUser) {
         userRow = existingUser;
@@ -1141,6 +1900,15 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       }
     }
 
+    const access = getUserAccessById(db, userRow.id);
+    if (!access.allowed) {
+      const fail = buildRedirectWithParams(redirectTo || "/", {
+        error: access.reason || "access_denied",
+      });
+      res.redirect(fail);
+      return;
+    }
+
     const session = createSession(db, userRow.id);
     setSessionCookie(res, session.token, {
       maxAgeMs: AUTH_SESSION_TTL_MS,
@@ -1156,11 +1924,17 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
 
   app.get("/threads", readLimiter, (_req, res) => {
     purgeExpiredThreads(db);
-    const rows = db.prepare(`
-      SELECT * FROM threads
-      ORDER BY datetime(created_at) DESC
-      LIMIT 100
-    `).all();
+    const rows = db
+      .prepare(
+        `
+        SELECT *
+        FROM threads
+        WHERE COALESCE(is_deleted, 0) = 0
+        ORDER BY datetime(created_at) DESC
+        LIMIT 100
+      `
+      )
+      .all();
     res.json(rows.map((row) => serializeThread(row, db)));
   });
 
@@ -1275,7 +2049,12 @@ function sanitizeAvatarUrl(value) {
 }
 
 function normalizeAdminName(value) {
-  return String(value || "").trim().toLowerCase();
+  if (!value) return "";
+  return String(value)
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function shouldGrantAdmin({ userId, email, displayName, dev }) {
@@ -1357,6 +2136,79 @@ function sanitizeAdminSettings(patch) {
 function sanitizeReason(value) {
   if (!value) return "";
   return String(value).trim().slice(0, 200);
+}
+
+function sanitizeRiskFlag(value) {
+  const cleaned = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]/g, "");
+  return cleaned.slice(0, 40);
+}
+
+function sanitizeTrustOverride(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized || normalized === "none") return "";
+  if (["low", "neutral", "high"].includes(normalized)) return normalized;
+  return "";
+}
+
+function parseIsoDate(value) {
+  if (!value) return null;
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return null;
+  return new Date(ts).toISOString();
+}
+
+function isSuspensionActive(row) {
+  if (!row?.is_suspended) return false;
+  if (!row.suspended_until) return true;
+  const until = Date.parse(row.suspended_until);
+  if (!Number.isFinite(until)) return true;
+  return until > Date.now();
+}
+
+function clearExpiredSuspension(db, row) {
+  if (!db || !row?.id) return;
+  if (!row.is_suspended || !row.suspended_until) return;
+  const until = Date.parse(row.suspended_until);
+  if (!Number.isFinite(until) || until > Date.now()) return;
+  db.prepare(
+    `UPDATE users
+     SET is_suspended = 0, suspended_until = NULL, suspended_reason = NULL
+     WHERE id = ?`
+  ).run(row.id);
+}
+
+function resolveUserAccess(db, row) {
+  if (!row) return { allowed: false, reason: "user_not_found" };
+  if (row.is_banned) return { allowed: false, reason: "user_banned" };
+  if (row.is_suspended) {
+    if (!isSuspensionActive(row)) {
+      clearExpiredSuspension(db, row);
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: "user_suspended",
+      until: row.suspended_until || null,
+    };
+  }
+  return { allowed: true };
+}
+
+function getUserAccessById(db, userId) {
+  if (!db) return { allowed: false, reason: "db_unavailable" };
+  const safeId = Number.parseInt(userId, 10);
+  if (!Number.isFinite(safeId)) return { allowed: false, reason: "invalid_user_id" };
+  const row = db
+    .prepare(
+      `SELECT id, is_banned, is_suspended, suspended_until
+       FROM users
+       WHERE id = ?`
+    )
+    .get(safeId);
+  return resolveUserAccess(db, row);
 }
 
 function ensureAdminSettingsRow(db) {
@@ -1571,13 +2423,26 @@ function updateUserSettingsState(db, userId, patch) {
   };
 }
 
-function logAdminAction(db, { userId, action, detail, reason } = {}) {
+function logAdminAction(db, { userId, action, detail, reason, targetUserId } = {}) {
   if (!db || !action) return;
   const now = new Date().toISOString();
+  const serializedDetail =
+    detail === undefined || detail === null
+      ? ""
+      : typeof detail === "string"
+        ? detail
+        : JSON.stringify(detail);
   db.prepare(
-    `INSERT INTO admin_actions (admin_user_id, action, detail, reason, created_at)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(userId ?? null, action, detail || "", reason || "", now);
+    `INSERT INTO admin_actions (admin_user_id, target_user_id, action, detail, reason, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    userId ?? null,
+    targetUserId ?? null,
+    action,
+    serializedDetail || "",
+    reason || "",
+    now
+  );
 }
 
 function getAdminActions(db, limit = 50) {
@@ -1590,14 +2455,42 @@ function getAdminActions(db, limit = 50) {
               a.detail,
               a.reason,
               a.created_at,
+              a.target_user_id,
               u.email as admin_email,
-              u.display_name as admin_name
+              u.display_name as admin_name,
+              t.email as target_email,
+              t.display_name as target_name
        FROM admin_actions a
        LEFT JOIN users u ON u.id = a.admin_user_id
+       LEFT JOIN users t ON t.id = a.target_user_id
        ORDER BY datetime(a.created_at) DESC
        LIMIT ?`
     )
     .all(safeLimit);
+}
+
+function getAdminActionsForUser(db, userId, limit = 50) {
+  if (!db) return [];
+  const safeLimit = clampInt(limit, 1, 200) ?? 50;
+  const safeUserId = Number.parseInt(userId, 10);
+  if (!Number.isFinite(safeUserId)) return [];
+  return db
+    .prepare(
+      `SELECT a.id,
+              a.action,
+              a.detail,
+              a.reason,
+              a.created_at,
+              a.target_user_id,
+              u.email as admin_email,
+              u.display_name as admin_name
+       FROM admin_actions a
+       LEFT JOIN users u ON u.id = a.admin_user_id
+       WHERE a.target_user_id = ?
+       ORDER BY datetime(a.created_at) DESC
+       LIMIT ?`
+    )
+    .all(safeUserId, safeLimit);
 }
 
 function isUploadsDisabled(settings) {
@@ -2010,6 +2903,107 @@ function ensureUserColumns(db) {
   addColumn("avatar_url", "TEXT");
   addColumn("bio", "TEXT");
   addColumn("is_admin", "INTEGER DEFAULT 0");
+  addColumn("is_suspended", "INTEGER DEFAULT 0");
+  addColumn("suspended_until", "DATETIME");
+  addColumn("suspended_reason", "TEXT");
+  addColumn("is_banned", "INTEGER DEFAULT 0");
+  addColumn("banned_at", "DATETIME");
+  addColumn("banned_reason", "TEXT");
+  addColumn("shadow_restricted", "INTEGER DEFAULT 0");
+  addColumn("trust_override", "TEXT");
+  addColumn("trust_override_reason", "TEXT");
+  addColumn("trust_override_at", "DATETIME");
+}
+
+function tableExists(db, name) {
+  if (!db || !name) return false;
+  try {
+    const row = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`
+      )
+      .get(name);
+    return Boolean(row?.name);
+  } catch {
+    return false;
+  }
+}
+
+function ensureThreadColumns(db) {
+  if (!db || !tableExists(db, "threads")) return;
+  const columns = db
+    .prepare("PRAGMA table_info(threads)")
+    .all()
+    .map((row) => row.name);
+  const existing = new Set(columns);
+  const addColumn = (name, definition) => {
+    if (existing.has(name)) return;
+    db.prepare(`ALTER TABLE threads ADD COLUMN ${name} ${definition}`).run();
+  };
+  addColumn("is_deleted", "INTEGER DEFAULT 0");
+  addColumn("deleted_at", "DATETIME");
+  addColumn("deleted_by", "INTEGER");
+  addColumn("deleted_reason", "TEXT");
+  addColumn("is_frozen", "INTEGER DEFAULT 0");
+  addColumn("frozen_at", "DATETIME");
+  addColumn("frozen_by", "INTEGER");
+  addColumn("frozen_reason", "TEXT");
+}
+
+function ensurePostColumns(db) {
+  if (!db || !tableExists(db, "posts")) return;
+  const columns = db
+    .prepare("PRAGMA table_info(posts)")
+    .all()
+    .map((row) => row.name);
+  const existing = new Set(columns);
+  const addColumn = (name, definition) => {
+    if (existing.has(name)) return;
+    db.prepare(`ALTER TABLE posts ADD COLUMN ${name} ${definition}`).run();
+  };
+  addColumn("is_deleted", "INTEGER DEFAULT 0");
+  addColumn("deleted_at", "DATETIME");
+  addColumn("deleted_by", "INTEGER");
+  addColumn("deleted_reason", "TEXT");
+}
+
+function ensureAdminActionColumns(db) {
+  if (!db || !tableExists(db, "admin_actions")) return;
+  const columns = db
+    .prepare("PRAGMA table_info(admin_actions)")
+    .all()
+    .map((row) => row.name);
+  const existing = new Set(columns);
+  const addColumn = (name, definition) => {
+    if (existing.has(name)) return;
+    db.prepare(`ALTER TABLE admin_actions ADD COLUMN ${name} ${definition}`).run();
+  };
+  addColumn("target_user_id", "INTEGER");
+  try {
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_admin_actions_target ON admin_actions(target_user_id, created_at DESC);"
+    );
+  } catch {
+    // Ignore index creation failures.
+  }
+}
+
+function ensureRiskFlagColumns(db) {
+  if (!db || !tableExists(db, "user_risk_flags")) return;
+  const columns = db
+    .prepare("PRAGMA table_info(user_risk_flags)")
+    .all()
+    .map((row) => row.name);
+  const existing = new Set(columns);
+  const addColumn = (name, definition) => {
+    if (existing.has(name)) return;
+    db.prepare(`ALTER TABLE user_risk_flags ADD COLUMN ${name} ${definition}`).run();
+  };
+  addColumn("level", "TEXT");
+  addColumn("note", "TEXT");
+  addColumn("created_by", "INTEGER");
+  addColumn("resolved_at", "DATETIME");
+  addColumn("resolved_by", "INTEGER");
 }
 
 function prepareSchema(db) {
@@ -2135,20 +3129,103 @@ function prepareSchema(db) {
       FOREIGN KEY(updated_by) REFERENCES users(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS admin_bootstrap (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      ran_at DATETIME,
+      detail TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS admin_actions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       admin_user_id INTEGER,
+      target_user_id INTEGER,
       action TEXT NOT NULL,
       detail TEXT,
       reason TEXT,
       created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-      FOREIGN KEY(admin_user_id) REFERENCES users(id) ON DELETE SET NULL
+      FOREIGN KEY(admin_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY(target_user_id) REFERENCES users(id) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_admin_actions_created ON admin_actions(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS user_risk_flags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      flag TEXT NOT NULL,
+      level TEXT,
+      note TEXT,
+      created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      created_by INTEGER,
+      resolved_at DATETIME,
+      resolved_by INTEGER,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY(resolved_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_risk_flags_user ON user_risk_flags(user_id, created_at DESC);
   `);
 
   ensureUserColumns(db);
+  ensureThreadColumns(db);
+  ensurePostColumns(db);
   ensureAdminSettingsRow(db);
+  ensureAdminActionColumns(db);
+  ensureRiskFlagColumns(db);
+}
+
+function runAdminBootstrap(db) {
+  if (!db) return;
+  try {
+    const row = db
+      .prepare(`SELECT ran_at FROM admin_bootstrap WHERE id = 1`)
+      .get();
+    if (row?.ran_at) return;
+  } catch {
+    // If bootstrap table is unavailable, skip silently.
+    return;
+  }
+
+  const targetIds = new Set(ADMIN_USER_IDS);
+
+  if (ADMIN_EMAILS.length > 0) {
+    const placeholders = ADMIN_EMAILS.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT id FROM users WHERE email IN (${placeholders})`)
+      .all(...ADMIN_EMAILS);
+    rows.forEach((row) => {
+      if (row?.id) targetIds.add(row.id);
+    });
+  }
+
+  if (ADMIN_DISPLAY_NAMES.length > 0) {
+    const nameSet = new Set(ADMIN_DISPLAY_NAMES);
+    const rows = db
+      .prepare(`SELECT id, display_name FROM users`)
+      .all();
+    rows.forEach((row) => {
+      const normalized = normalizeAdminName(row?.display_name);
+      if (normalized && nameSet.has(normalized)) {
+        targetIds.add(row.id);
+      }
+    });
+  }
+
+  if (targetIds.size === 0) return;
+
+  const ids = Array.from(targetIds);
+  const placeholders = ids.map(() => "?").join(",");
+  const result = db
+    .prepare(`UPDATE users SET is_admin = 1 WHERE id IN (${placeholders})`)
+    .run(...ids);
+
+  const detail = {
+    targetCount: ids.length,
+    updated: result?.changes ?? 0,
+  };
+  db.prepare(
+    `INSERT OR REPLACE INTO admin_bootstrap (id, ran_at, detail)
+     VALUES (1, ?, ?)`
+  ).run(new Date().toISOString(), JSON.stringify(detail));
 }
 
 function purgeExpiredThreads(db) {
@@ -2162,13 +3239,18 @@ function serializeThread(row, db) {
   if (!row) return null;
   const replies = db
     .prepare(
-      `SELECT * FROM posts WHERE thread_id = ? ORDER BY datetime(created_at) ASC`
+      `SELECT *
+       FROM posts
+       WHERE thread_id = ?
+         AND COALESCE(is_deleted, 0) = 0
+       ORDER BY datetime(created_at) ASC`
     )
     .all(row.id);
   return {
     ...row,
     text: row.body || row.title || "",
     image: row.image_filename ? `/uploads/${row.image_filename}` : null,
+    isFrozen: Boolean(row.is_frozen),
     replies: replies.map((reply) => ({
       ...reply,
       text: reply.body || "",

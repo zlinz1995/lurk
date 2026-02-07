@@ -74,6 +74,19 @@ const DEFAULT_SETTINGS = {
   admin_mandatory_reason_codes: false,
 };
 
+const DIRECTORY_ACTIONS = [
+  { value: "", label: "Select action", requires: null },
+  { value: "suspend", label: "Suspend user", requires: "user_suspend" },
+  { value: "unsuspend", label: "Unsuspend user", requires: "user_suspend" },
+  { value: "ban", label: "Ban user", requires: "user_permanent_bans" },
+  { value: "unban", label: "Unban user", requires: "user_permanent_bans" },
+  { value: "force-logout", label: "Force logout", requires: "user_force_logout" },
+  { value: "shadow-restrict", label: "Shadow restrict", requires: "user_shadow_restrict" },
+  { value: "shadow-unrestrict", label: "Shadow unrestrict", requires: "user_shadow_restrict" },
+  { value: "verify", label: "Verify", requires: "user_verify_accounts" },
+  { value: "unverify", label: "Unverify", requires: "user_verify_accounts" },
+];
+
 const ADMIN_SECTIONS = [
   {
     id: "user",
@@ -253,6 +266,32 @@ const readAuthToken = () => {
   }
 };
 
+const formatDetail = (detail) => {
+  if (!detail) return "";
+  if (typeof detail !== "string") {
+    return JSON.stringify(detail);
+  }
+  const trimmed = detail.trim();
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.stringify(JSON.parse(trimmed));
+    } catch {
+      return detail;
+    }
+  }
+  return detail;
+};
+
+const normalizeDatetime = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString();
+};
+
 
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
@@ -264,6 +303,25 @@ export default function AdminPage() {
   const [actionLog, setActionLog] = useState([]);
   const [savingKey, setSavingKey] = useState("");
   const saveTimerRef = useRef(null);
+  const actionTimerRef = useRef(null);
+
+  const [actionStatus, setActionStatus] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+  const [userLookupId, setUserLookupId] = useState("");
+  const [userSnapshot, setUserSnapshot] = useState(null);
+  const [userActionLog, setUserActionLog] = useState([]);
+  const [userRiskFlags, setUserRiskFlags] = useState([]);
+  const [userDirectory, setUserDirectory] = useState([]);
+  const [userDirectoryTotal, setUserDirectoryTotal] = useState(0);
+  const [userDirectoryLoading, setUserDirectoryLoading] = useState(false);
+  const [directoryActions, setDirectoryActions] = useState({});
+  const [riskFlagForm, setRiskFlagForm] = useState({ flag: "", level: "", note: "" });
+  const [riskResolveId, setRiskResolveId] = useState("");
+  const [trustOverride, setTrustOverride] = useState("");
+  const [suspendUntil, setSuspendUntil] = useState("");
+  const [resetDisplayName, setResetDisplayName] = useState("");
+  const [threadId, setThreadId] = useState("");
+  const [postId, setPostId] = useState("");
 
   const apiFetch = useCallback(async (path, options = {}) => {
     const apiContext = getApiContext();
@@ -363,6 +421,27 @@ export default function AdminPage() {
     };
   }, [isAdmin, loadAdminActions, loadAdminSettings]);
 
+  useEffect(() => {
+    setUserSnapshot(null);
+    setUserActionLog([]);
+    setUserRiskFlags([]);
+  }, [userLookupId]);
+
+  useEffect(() => {
+    if (userDirectory.length === 0) return;
+    setDirectoryActions((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      userDirectory.forEach((user) => {
+        if (!next[user.id]) {
+          next[user.id] = "";
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [userDirectory]);
+
   const requireReason = settings.admin_mandatory_reason_codes;
 
   const scheduleStatusClear = useCallback((message) => {
@@ -375,6 +454,139 @@ export default function AdminPage() {
       setStatus("");
     }, 1600);
   }, []);
+
+  const scheduleActionStatus = useCallback((message) => {
+    if (!message) return;
+    if (actionTimerRef.current) {
+      clearTimeout(actionTimerRef.current);
+    }
+    setActionStatus(message);
+    actionTimerRef.current = setTimeout(() => {
+      setActionStatus("");
+    }, 2000);
+  }, []);
+
+  const buildReasonPayload = useCallback(
+    (extra = {}) => {
+      const payload = { ...extra };
+      const reason = reasonCode.trim();
+      if (reason) payload.reason = reason;
+      return payload;
+    },
+    [reasonCode]
+  );
+
+  const performAdminAction = useCallback(
+    async (path, options = {}) => {
+      setActionBusy(true);
+      setActionStatus("");
+      try {
+        const res = await apiFetch(path, options);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (data?.error === "reason_required") {
+            scheduleActionStatus("Reason code required.");
+          } else {
+            scheduleActionStatus(data?.error || "Unable to complete action.");
+          }
+          return { ok: false, data };
+        }
+        return { ok: true, data };
+      } catch {
+        scheduleActionStatus("Network error.");
+        return { ok: false };
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [apiFetch, scheduleActionStatus]
+  );
+
+  const fetchUserSnapshot = useCallback(
+    async (id) => {
+      if (!id) {
+        scheduleActionStatus("Enter a user id.");
+        return null;
+      }
+      const res = await performAdminAction(`/admin/users/${id}`);
+      if (!res.ok) return null;
+      setUserSnapshot(res.data?.user || null);
+      return res.data?.user || null;
+    },
+    [performAdminAction, scheduleActionStatus]
+  );
+
+  const fetchUserActions = useCallback(
+    async (id) => {
+      if (!id) return;
+      const res = await performAdminAction(`/admin/users/${id}/actions?limit=50`);
+      if (!res.ok) return;
+      setUserActionLog(Array.isArray(res.data?.actions) ? res.data.actions : []);
+    },
+    [performAdminAction]
+  );
+
+  const fetchRiskFlags = useCallback(
+    async (id) => {
+      if (!id) return;
+      const res = await performAdminAction(
+        `/admin/users/${id}/risk-flags?includeResolved=1`
+      );
+      if (!res.ok) return;
+      setUserRiskFlags(Array.isArray(res.data?.flags) ? res.data.flags : []);
+    },
+    [performAdminAction]
+  );
+
+  const loadUserDirectory = useCallback(async () => {
+    if (!settingsReady || !settings.user_view_private_metadata) return;
+    setUserDirectoryLoading(true);
+    const res = await performAdminAction("/admin/users?limit=200&offset=0");
+    if (res.ok) {
+      setUserDirectory(Array.isArray(res.data?.users) ? res.data.users : []);
+      setUserDirectoryTotal(Number(res.data?.total) || 0);
+    }
+    setUserDirectoryLoading(false);
+  }, [performAdminAction, settingsReady, settings.user_view_private_metadata]);
+
+  useEffect(() => {
+    if (!isAdmin || !settingsReady) return;
+    if (!settings.user_view_private_metadata) return;
+    loadUserDirectory();
+  }, [isAdmin, loadUserDirectory, settings.user_view_private_metadata, settingsReady]);
+
+  const runUserAction = useCallback(
+    async (id, path, payload = null) => {
+      if (!id) {
+        scheduleActionStatus("Enter a user id.");
+        return;
+      }
+      const options = { method: "POST" };
+      if (payload && Object.keys(payload).length > 0) {
+        options.body = JSON.stringify(payload);
+      }
+      const res = await performAdminAction(`/admin/users/${id}/${path}`, options);
+      if (!res.ok) return;
+      scheduleActionStatus("Action applied.");
+      await fetchUserSnapshot(id);
+      await fetchUserActions(id);
+      await fetchRiskFlags(id);
+    },
+    [fetchRiskFlags, fetchUserActions, fetchUserSnapshot, performAdminAction, scheduleActionStatus]
+  );
+
+  const runContentAction = useCallback(
+    async (path, payload = null) => {
+      const options = { method: "POST" };
+      if (payload && Object.keys(payload).length > 0) {
+        options.body = JSON.stringify(payload);
+      }
+      const res = await performAdminAction(path, options);
+      if (!res.ok) return;
+      scheduleActionStatus("Content action applied.");
+    },
+    [performAdminAction, scheduleActionStatus]
+  );
 
   const handleToggle = useCallback(
     async (item) => {
@@ -484,6 +696,32 @@ export default function AdminPage() {
     });
   }, [actionLog]);
 
+  const formattedUserActions = useMemo(() => {
+    return userActionLog.map((entry) => {
+      const date = new Date(entry.created_at || entry.timestamp || "");
+      const ts = Number.isNaN(date.getTime())
+        ? entry.created_at || entry.timestamp || ""
+        : date.toLocaleString();
+      return { ...entry, ts };
+    });
+  }, [userActionLog]);
+
+  const formattedRiskFlags = useMemo(() => {
+    return userRiskFlags.map((entry) => {
+      const date = new Date(entry.created_at || "");
+      const ts = Number.isNaN(date.getTime()) ? entry.created_at || "" : date.toLocaleString();
+      return { ...entry, ts };
+    });
+  }, [userRiskFlags]);
+
+  const formattedDirectory = useMemo(() => {
+    return userDirectory.map((entry) => {
+      const date = new Date(entry.createdAt || "");
+      const ts = Number.isNaN(date.getTime()) ? entry.createdAt || "" : date.toLocaleString();
+      return { ...entry, ts };
+    });
+  }, [userDirectory]);
+
   if (loading) {
     return (
       <main className="admin-page">
@@ -546,6 +784,673 @@ export default function AdminPage() {
             Reset defaults
           </button>
           {status ? <div className="admin-status-banner">{status}</div> : null}
+        </div>
+        {actionStatus ? <div className="admin-status-banner">{actionStatus}</div> : null}
+
+        <div className="admin-grid">
+          <section className="admin-card">
+            <h2>Registered accounts</h2>
+            <p>Snapshot of recently created accounts and usernames.</p>
+            <div className="admin-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={loadUserDirectory}
+                disabled={
+                  actionBusy ||
+                  userDirectoryLoading ||
+                  !settingsReady ||
+                  !settings.user_view_private_metadata
+                }
+              >
+                {userDirectoryLoading ? "Loading..." : "Refresh list"}
+              </button>
+              <span className="admin-status">
+                {userDirectoryTotal
+                  ? `Total accounts: ${userDirectoryTotal}`
+                  : "Total accounts: —"}
+              </span>
+            </div>
+            {formattedDirectory.length === 0 ? (
+              <div className="admin-status">No accounts loaded.</div>
+            ) : (
+              <div className="admin-user-list">
+                <div className="admin-user-row admin-user-header">
+                  <span className="admin-user-cell">ID</span>
+                  <span className="admin-user-cell">Username</span>
+                  <span className="admin-user-cell">Email</span>
+                  <span className="admin-user-cell">Created</span>
+                  <span className="admin-user-cell">Admin</span>
+                  <span className="admin-user-cell">Quick action</span>
+                </div>
+                {formattedDirectory.map((user) => (
+                  <div key={user.id} className="admin-user-row">
+                    <span className="admin-user-cell">{user.id}</span>
+                    <span className="admin-user-cell">
+                      {user.displayName || "—"}
+                    </span>
+                    <span className="admin-user-cell">{user.email || "—"}</span>
+                    <span className="admin-user-cell">{user.ts || "—"}</span>
+                    <span className="admin-user-cell">
+                      {user.isAdmin ? "Yes" : "No"}
+                    </span>
+                    <span className="admin-user-cell admin-user-action-cell">
+                      <select
+                        className="admin-user-select"
+                        value={directoryActions[user.id] || ""}
+                        onChange={(event) =>
+                          setDirectoryActions((prev) => ({
+                            ...prev,
+                            [user.id]: event.target.value,
+                          }))
+                        }
+                        disabled={actionBusy || !settingsReady}
+                      >
+                        {DIRECTORY_ACTIONS.map((option) => (
+                          <option
+                            key={option.value || "none"}
+                            value={option.value}
+                            disabled={
+                              option.requires
+                                ? !settings[option.requires]
+                                : false
+                            }
+                          >
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="admin-button admin-user-action-button"
+                        onClick={() => {
+                          const action = directoryActions[user.id];
+                          if (!action) {
+                            scheduleActionStatus("Select an action.");
+                            return;
+                          }
+                          const meta = DIRECTORY_ACTIONS.find(
+                            (entry) => entry.value === action
+                          );
+                          if (meta?.requires && !settings[meta.requires]) {
+                            scheduleActionStatus("Permission disabled.");
+                            return;
+                          }
+                          runUserAction(user.id, action, buildReasonPayload());
+                        }}
+                        disabled={
+                          actionBusy ||
+                          !settingsReady ||
+                          !directoryActions[user.id]
+                        }
+                      >
+                        Apply
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="admin-card">
+            <h2>Administrator actions</h2>
+            <p>Lookup users and apply enforcement actions.</p>
+            <label className="admin-field">
+              User ID
+              <input
+                type="number"
+                min="1"
+                value={userLookupId}
+                onChange={(event) => setUserLookupId(event.target.value)}
+                placeholder="Enter user id"
+                disabled={actionBusy}
+              />
+            </label>
+            <div className="admin-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={async () => {
+                  const id = userLookupId.trim();
+                  if (!id) return scheduleActionStatus("Enter a user id.");
+                  const user = await fetchUserSnapshot(id);
+                  if (!user) return;
+                  await fetchUserActions(id);
+                  await fetchRiskFlags(id);
+                  scheduleActionStatus("User loaded.");
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_view_private_metadata
+                }
+              >
+                Load user
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  if (!id) return scheduleActionStatus("Enter a user id.");
+                  fetchUserActions(id);
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_view_moderation_history
+                }
+              >
+                Load user actions
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  if (!id) return scheduleActionStatus("Enter a user id.");
+                  fetchRiskFlags(id);
+                }}
+                disabled={actionBusy || !settingsReady || !settings.user_risk_flags}
+              >
+                Load risk flags
+              </button>
+            </div>
+
+            {userSnapshot ? (
+              <div className="admin-log">
+                <div className="admin-log-title">User snapshot</div>
+                <div className="admin-log-entry">
+                  <div className="admin-log-label">
+                    {userSnapshot.displayName || "User"} (#{userSnapshot.id})
+                  </div>
+                  <div className="admin-log-meta">
+                    {userSnapshot.email || "no-email"} · Verified:
+                    {userSnapshot.emailVerified ? " yes" : " no"} · Admin:
+                    {userSnapshot.isAdmin ? " yes" : " no"}
+                  </div>
+                  <div className="admin-log-meta">
+                    Suspended:
+                    {userSnapshot.isSuspended ? " yes" : " no"}
+                    {userSnapshot.suspendedUntil
+                      ? ` · Until: ${userSnapshot.suspendedUntil}`
+                      : ""}
+                    {userSnapshot.suspendedReason
+                      ? ` · Reason: ${userSnapshot.suspendedReason}`
+                      : ""}
+                  </div>
+                  <div className="admin-log-meta">
+                    Banned:
+                    {userSnapshot.isBanned ? " yes" : " no"}
+                    {userSnapshot.bannedReason
+                      ? ` · Reason: ${userSnapshot.bannedReason}`
+                      : ""}
+                  </div>
+                  <div className="admin-log-meta">
+                    Shadow restricted:
+                    {userSnapshot.shadowRestricted ? " yes" : " no"} · Trust override:
+                    {userSnapshot.trustOverride || " none"}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="admin-status">No user loaded.</div>
+            )}
+
+            <label className="admin-field">
+              Suspend until (optional)
+              <input
+                type="datetime-local"
+                value={suspendUntil}
+                onChange={(event) => setSuspendUntil(event.target.value)}
+                disabled={actionBusy}
+              />
+            </label>
+            <label className="admin-field">
+              Reset display name (optional)
+              <input
+                type="text"
+                value={resetDisplayName}
+                onChange={(event) => setResetDisplayName(event.target.value)}
+                disabled={actionBusy}
+              />
+            </label>
+            <label className="admin-field">
+              Trust override
+              <select
+                value={trustOverride}
+                onChange={(event) => setTrustOverride(event.target.value)}
+                disabled={actionBusy}
+              >
+                <option value="">None</option>
+                <option value="low">Low</option>
+                <option value="neutral">Neutral</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+
+            <div className="admin-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  const untilIso = normalizeDatetime(suspendUntil);
+                  const payload = buildReasonPayload(
+                    untilIso ? { until: untilIso } : {}
+                  );
+                  runUserAction(id, "suspend", payload);
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_suspend
+                }
+              >
+                Suspend
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  runUserAction(id, "unsuspend", buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_suspend
+                }
+              >
+                Unsuspend
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  runUserAction(id, "ban", buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_permanent_bans
+                }
+              >
+                Ban
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  runUserAction(id, "unban", buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_permanent_bans
+                }
+              >
+                Unban
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  runUserAction(id, "shadow-restrict", buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_shadow_restrict
+                }
+              >
+                Shadow restrict
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  runUserAction(id, "shadow-unrestrict", buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_shadow_restrict
+                }
+              >
+                Shadow unrestrict
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  runUserAction(id, "force-logout", buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_force_logout
+                }
+              >
+                Force logout
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  const payload = buildReasonPayload(
+                    resetDisplayName.trim()
+                      ? { displayName: resetDisplayName.trim() }
+                      : {}
+                  );
+                  runUserAction(id, "reset-profile", payload);
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_reset_profile
+                }
+              >
+                Reset profile
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  runUserAction(id, "verify", buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_verify_accounts
+                }
+              >
+                Verify
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  runUserAction(id, "unverify", buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_verify_accounts
+                }
+              >
+                Unverify
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  const payload = buildReasonPayload({
+                    level: trustOverride || "",
+                  });
+                  runUserAction(id, "trust-override", payload);
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_risk_flags
+                }
+              >
+                Apply trust override
+              </button>
+            </div>
+
+            {formattedUserActions.length > 0 ? (
+              <div className="admin-log">
+                <div className="admin-log-title">Recent user actions</div>
+                {formattedUserActions.slice(0, 6).map((entry) => (
+                  <div key={entry.id} className="admin-log-entry">
+                    <div className="admin-log-label">{entry.action}</div>
+                    <div className="admin-log-meta">
+                      {formatDetail(entry.detail)}
+                      {entry.reason ? ` · Reason: ${entry.reason}` : ""}
+                    </div>
+                    <div className="admin-log-time">{entry.ts}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="admin-card">
+            <h2>Risk flags</h2>
+            <p>Track and resolve elevated trust risks.</p>
+            <label className="admin-field">
+              Flag code
+              <input
+                type="text"
+                value={riskFlagForm.flag}
+                onChange={(event) =>
+                  setRiskFlagForm((prev) => ({ ...prev, flag: event.target.value }))
+                }
+                disabled={actionBusy}
+              />
+            </label>
+            <label className="admin-field">
+              Flag level
+              <input
+                type="text"
+                value={riskFlagForm.level}
+                onChange={(event) =>
+                  setRiskFlagForm((prev) => ({ ...prev, level: event.target.value }))
+                }
+                disabled={actionBusy}
+              />
+            </label>
+            <label className="admin-field">
+              Notes
+              <textarea
+                rows={2}
+                value={riskFlagForm.note}
+                onChange={(event) =>
+                  setRiskFlagForm((prev) => ({ ...prev, note: event.target.value }))
+                }
+                disabled={actionBusy}
+              />
+            </label>
+            <div className="admin-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  const payload = buildReasonPayload({
+                    flag: riskFlagForm.flag,
+                    level: riskFlagForm.level,
+                    note: riskFlagForm.note,
+                  });
+                  runUserAction(id, "risk-flags", payload);
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_risk_flags
+                }
+              >
+                Add flag
+              </button>
+            </div>
+            <label className="admin-field">
+              Resolve flag ID
+              <input
+                type="number"
+                min="1"
+                value={riskResolveId}
+                onChange={(event) => setRiskResolveId(event.target.value)}
+                disabled={actionBusy}
+              />
+            </label>
+            <div className="admin-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  const id = userLookupId.trim();
+                  if (!riskResolveId.trim()) {
+                    scheduleActionStatus("Enter a flag id.");
+                    return;
+                  }
+                  runUserAction(id, `risk-flags/${riskResolveId.trim()}/resolve`, buildReasonPayload());
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.user_risk_flags
+                }
+              >
+                Resolve flag
+              </button>
+            </div>
+
+            {formattedRiskFlags.length > 0 ? (
+              <div className="admin-log">
+                <div className="admin-log-title">Risk flags</div>
+                {formattedRiskFlags.slice(0, 6).map((flag) => (
+                  <div key={flag.id} className="admin-log-entry">
+                    <div className="admin-log-label">
+                      {flag.flag}
+                      {flag.level ? ` · ${flag.level}` : ""}
+                    </div>
+                    <div className="admin-log-meta">
+                      {flag.note || ""}
+                      {flag.resolved_at ? " · Resolved" : " · Active"}
+                    </div>
+                    <div className="admin-log-time">{flag.ts}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="admin-status">No risk flags loaded.</div>
+            )}
+          </section>
+
+          <section className="admin-card">
+            <h2>Content moderation</h2>
+            <p>Remove, restore, or freeze threads and comments.</p>
+            <label className="admin-field">
+              Thread ID
+              <input
+                type="number"
+                min="1"
+                value={threadId}
+                onChange={(event) => setThreadId(event.target.value)}
+                disabled={actionBusy}
+              />
+            </label>
+            <div className="admin-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  if (!threadId.trim()) {
+                    scheduleActionStatus("Enter a thread id.");
+                    return;
+                  }
+                  runContentAction(
+                    `/admin/threads/${threadId.trim()}/delete`,
+                    buildReasonPayload()
+                  );
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.content_remove
+                }
+              >
+                Delete thread
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  if (!threadId.trim()) {
+                    scheduleActionStatus("Enter a thread id.");
+                    return;
+                  }
+                  runContentAction(
+                    `/admin/threads/${threadId.trim()}/restore`,
+                    buildReasonPayload()
+                  );
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.content_restore
+                }
+              >
+                Restore thread
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  if (!threadId.trim()) {
+                    scheduleActionStatus("Enter a thread id.");
+                    return;
+                  }
+                  runContentAction(
+                    `/admin/threads/${threadId.trim()}/freeze`,
+                    buildReasonPayload()
+                  );
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.content_freeze_threads
+                }
+              >
+                Freeze thread
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  if (!threadId.trim()) {
+                    scheduleActionStatus("Enter a thread id.");
+                    return;
+                  }
+                  runContentAction(
+                    `/admin/threads/${threadId.trim()}/unfreeze`,
+                    buildReasonPayload()
+                  );
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.content_freeze_threads
+                }
+              >
+                Unfreeze thread
+              </button>
+            </div>
+
+            <label className="admin-field">
+              Comment ID
+              <input
+                type="number"
+                min="1"
+                value={postId}
+                onChange={(event) => setPostId(event.target.value)}
+                disabled={actionBusy}
+              />
+            </label>
+            <div className="admin-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  if (!postId.trim()) {
+                    scheduleActionStatus("Enter a comment id.");
+                    return;
+                  }
+                  runContentAction(
+                    `/admin/posts/${postId.trim()}/delete`,
+                    buildReasonPayload()
+                  );
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.content_remove
+                }
+              >
+                Delete comment
+              </button>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => {
+                  if (!postId.trim()) {
+                    scheduleActionStatus("Enter a comment id.");
+                    return;
+                  }
+                  runContentAction(
+                    `/admin/posts/${postId.trim()}/restore`,
+                    buildReasonPayload()
+                  );
+                }}
+                disabled={
+                  actionBusy || !settingsReady || !settings.content_restore
+                }
+              >
+                Restore comment
+              </button>
+            </div>
+          </section>
         </div>
 
         <div className="admin-grid">
