@@ -77,6 +77,7 @@ const writeAuthToken = (token) => {
     } else {
       window.localStorage?.setItem(AUTH_TOKEN_KEY, token);
     }
+    window.dispatchEvent(new Event("lurk-auth-change"));
   } catch {
     // Ignore storage failures.
   }
