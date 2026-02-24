@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
   user_shadow_restrict: true,
   user_force_logout: true,
   user_reset_profile: true,
+  user_delete_accounts: true,
   user_verify_accounts: true,
   user_view_private_metadata: true,
   user_view_moderation_history: true,
@@ -83,6 +84,7 @@ const DIRECTORY_ACTIONS = [
   { value: "force-logout", label: "Force logout", requires: "user_force_logout" },
   { value: "shadow-restrict", label: "Shadow restrict", requires: "user_shadow_restrict" },
   { value: "shadow-unrestrict", label: "Shadow unrestrict", requires: "user_shadow_restrict" },
+  { value: "delete", label: "Delete user", requires: "user_delete_accounts" },
   { value: "verify", label: "Verify", requires: "user_verify_accounts" },
   { value: "unverify", label: "Unverify", requires: "user_verify_accounts" },
 ];
@@ -98,6 +100,7 @@ const ADMIN_SECTIONS = [
       { key: "user_shadow_restrict", label: "Shadow restrict / visibility suppression" },
       { key: "user_force_logout", label: "Force logout all sessions" },
       { key: "user_reset_profile", label: "Reset usernames & profile data" },
+      { key: "user_delete_accounts", label: "Delete user accounts" },
       { key: "user_verify_accounts", label: "Verify / unverify accounts" },
       { key: "user_view_private_metadata", label: "View private account metadata" },
       { key: "user_view_moderation_history", label: "View moderation & enforcement history" },
@@ -292,6 +295,50 @@ const normalizeDatetime = (value) => {
   return date.toISOString();
 };
 
+const toHostedAssetPath = (
+  value,
+  { allowPlayables = false, allowUploads = false } = {}
+) => {
+  if (!value) return "";
+  let candidate = String(value).trim();
+  if (!candidate) return "";
+  if (/^(https?:)?\/\//i.test(candidate)) {
+    try {
+      const url = candidate.startsWith("//")
+        ? new URL(`http:${candidate}`)
+        : new URL(candidate);
+      candidate = url.pathname || "";
+    } catch {
+      return "";
+    }
+  } else if (!candidate.startsWith("/")) {
+    if (
+      (allowPlayables && candidate.startsWith("playables-assets/")) ||
+      (allowUploads && candidate.startsWith("uploads/"))
+    ) {
+      candidate = `/${candidate}`;
+    }
+  }
+  if (candidate.includes("..")) return "";
+  const validPlayables = allowPlayables && candidate.startsWith("/playables-assets/");
+  const validUploads = allowUploads && candidate.startsWith("/uploads/");
+  return validPlayables || validUploads ? candidate : "";
+};
+
+const getHostedPathSuggestion = (submission) =>
+  toHostedAssetPath(submission?.hostedPath, { allowPlayables: true }) ||
+  toHostedAssetPath(submission?.buildUrl, { allowPlayables: true });
+
+const getHostedThumbnailSuggestion = (submission) =>
+  toHostedAssetPath(submission?.hostedThumbnail, {
+    allowPlayables: true,
+    allowUploads: true,
+  }) ||
+  toHostedAssetPath(submission?.thumbnailUrl, {
+    allowPlayables: true,
+    allowUploads: true,
+  });
+
 
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
@@ -322,6 +369,19 @@ export default function AdminPage() {
   const [resetDisplayName, setResetDisplayName] = useState("");
   const [threadId, setThreadId] = useState("");
   const [postId, setPostId] = useState("");
+  const [playableFilter, setPlayableFilter] = useState("pending");
+  const [playableSubmissions, setPlayableSubmissions] = useState([]);
+  const [playableEdits, setPlayableEdits] = useState({});
+  const [playableLoading, setPlayableLoading] = useState(false);
+  const [playableStatus, setPlayableStatus] = useState("");
+  const [playableSummary, setPlayableSummary] = useState({
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    total: 0,
+    latestAt: null,
+  });
+  const [playableSummaryLoading, setPlayableSummaryLoading] = useState(false);
 
   const apiFetch = useCallback(async (path, options = {}) => {
     const apiContext = getApiContext();
@@ -403,6 +463,122 @@ export default function AdminPage() {
     }
   }, [apiFetch]);
 
+  const loadPlayableSubmissions = useCallback(
+    async (nextFilter = playableFilter) => {
+      if (!isAdmin) return;
+      setPlayableLoading(true);
+      setPlayableStatus("");
+      try {
+        const statusParam = nextFilter ? `?status=${encodeURIComponent(nextFilter)}` : "";
+        const res = await apiFetch(`/admin/playables/submissions${statusParam}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setPlayableStatus(data?.error || "Unable to load submissions.");
+          return;
+        }
+        setPlayableSubmissions(
+          Array.isArray(data?.submissions) ? data.submissions : []
+        );
+      } catch {
+        setPlayableStatus("Unable to load submissions.");
+      } finally {
+        setPlayableLoading(false);
+      }
+    },
+    [apiFetch, isAdmin, playableFilter]
+  );
+
+  const loadPlayableSummary = useCallback(async () => {
+    if (!isAdmin) return;
+    setPlayableSummaryLoading(true);
+    try {
+      const res = await apiFetch("/admin/playables/summary");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.summary) {
+        setPlayableSummary(data.summary);
+      }
+    } catch {
+      // Ignore summary load failures.
+    } finally {
+      setPlayableSummaryLoading(false);
+    }
+  }, [apiFetch, isAdmin]);
+
+  const updatePlayableEdit = useCallback((id, key, value) => {
+    setPlayableEdits((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] || {}), [key]: value },
+    }));
+  }, []);
+
+  const handlePlayableDecision = useCallback(
+    async (id, action) => {
+      if (!id || !action) return;
+      setPlayableStatus("");
+      const edits = playableEdits[id] || {};
+      const submission =
+        playableSubmissions.find((entry) => entry.id === id) || null;
+      const payload = {
+        hostedPath: edits.hostedPath || getHostedPathSuggestion(submission) || "",
+        hostedId: edits.hostedId || "",
+        hostedThumbnail:
+          edits.hostedThumbnail || getHostedThumbnailSuggestion(submission) || "",
+        adminNotes: edits.adminNotes || "",
+      };
+      try {
+        const res = await apiFetch(`/admin/playables/submissions/${id}/${action}`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = data?.detail ? ` - ${data.detail}` : "";
+          setPlayableStatus(`${data?.error || "Unable to update submission."}${detail}`);
+          return;
+        }
+        const label = action === "approve" ? "approved" : "rejected";
+        setPlayableStatus(`Submission ${label}.`);
+        await loadPlayableSubmissions(playableFilter);
+        await loadPlayableSummary();
+      } catch {
+        setPlayableStatus("Unable to update submission.");
+      }
+    },
+    [
+      apiFetch,
+      loadPlayableSubmissions,
+      loadPlayableSummary,
+      playableEdits,
+      playableFilter,
+      playableSubmissions,
+    ]
+  );
+
+  const handlePlayableDelete = useCallback(
+    async (id) => {
+      if (!id) return;
+      if (!window.confirm("Delete this submission?")) return;
+      setPlayableStatus("");
+      try {
+        const res = await apiFetch(`/admin/playables/submissions/${id}`, {
+          method: "DELETE",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = data?.detail ? ` - ${data.detail}` : "";
+          setPlayableStatus(`${data?.error || "Unable to delete submission."}${detail}`);
+          return;
+        }
+        setPlayableStatus("Submission deleted.");
+        await loadPlayableSubmissions(playableFilter);
+        await loadPlayableSummary();
+      } catch {
+        setPlayableStatus("Unable to delete submission.");
+      }
+    },
+    [apiFetch, loadPlayableSubmissions, loadPlayableSummary, playableFilter]
+  );
+
   useEffect(() => {
     if (!isAdmin) {
       setSettingsReady(false);
@@ -420,6 +596,15 @@ export default function AdminPage() {
       cancelled = true;
     };
   }, [isAdmin, loadAdminActions, loadAdminSettings]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setPlayableSubmissions([]);
+      return;
+    }
+    loadPlayableSubmissions(playableFilter);
+    loadPlayableSummary();
+  }, [isAdmin, loadPlayableSubmissions, loadPlayableSummary, playableFilter]);
 
   useEffect(() => {
     setUserSnapshot(null);
@@ -441,6 +626,23 @@ export default function AdminPage() {
       return changed ? next : prev;
     });
   }, [userDirectory]);
+
+  useEffect(() => {
+    if (playableSubmissions.length === 0) {
+      setPlayableEdits({});
+      return;
+    }
+    const next = {};
+    playableSubmissions.forEach((submission) => {
+      next[submission.id] = {
+        hostedPath: getHostedPathSuggestion(submission) || "",
+        hostedId: submission.hostedId || "",
+        hostedThumbnail: getHostedThumbnailSuggestion(submission) || "",
+        adminNotes: submission.adminNotes || "",
+      };
+    });
+    setPlayableEdits(next);
+  }, [playableSubmissions]);
 
   const requireReason = settings.admin_mandatory_reason_codes;
 
@@ -567,6 +769,25 @@ export default function AdminPage() {
       }
       const res = await performAdminAction(`/admin/users/${id}/${path}`, options);
       if (!res.ok) return;
+      if (path === "delete") {
+        const idValue = String(id);
+        setUserDirectory((prev) =>
+          prev.filter((entry) => String(entry.id) !== idValue)
+        );
+        setUserDirectoryTotal((prev) => Math.max(0, Number(prev || 0) - 1));
+        setDirectoryActions((prev) => {
+          if (!Object.prototype.hasOwnProperty.call(prev, idValue)) return prev;
+          const next = { ...prev };
+          delete next[idValue];
+          return next;
+        });
+        setUserSnapshot(null);
+        setUserActionLog([]);
+        setUserRiskFlags([]);
+        setUserLookupId((prev) => (String(prev) === idValue ? "" : prev));
+        scheduleActionStatus("User deleted.");
+        return;
+      }
       scheduleActionStatus("Action applied.");
       await fetchUserSnapshot(id);
       await fetchUserActions(id);
@@ -789,6 +1010,185 @@ export default function AdminPage() {
 
         <div className="admin-grid">
           <section className="admin-card">
+            <h2>Playable queue health</h2>
+            <p>Industry-standard intake visibility for playables under review.</p>
+            <div className="admin-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={loadPlayableSummary}
+                disabled={playableSummaryLoading}
+              >
+                {playableSummaryLoading ? "Refreshing..." : "Refresh summary"}
+              </button>
+              <span className="admin-status">
+                {playableSummary.latestAt
+                  ? `Latest submission: ${new Date(playableSummary.latestAt).toLocaleString()}`
+                  : "Latest submission: —"}
+              </span>
+            </div>
+            <div className="admin-actions">
+              <span className="admin-status">
+                Pending: {playableSummary.pending}
+              </span>
+              <span className="admin-status">
+                Approved: {playableSummary.approved}
+              </span>
+              <span className="admin-status">
+                Rejected: {playableSummary.rejected}
+              </span>
+              <span className="admin-status">
+                Total: {playableSummary.total}
+              </span>
+            </div>
+            <div className="admin-status">
+              All approved games are sandboxed, static, and validated before publish.
+            </div>
+          </section>
+          <section className="admin-card">
+            <h2>Playable submissions</h2>
+            <p>Review developer submissions and approve hosted playables.</p>
+            <div className="admin-actions">
+              <label className="admin-field">
+                Status
+                <select
+                  value={playableFilter}
+                  onChange={(event) => setPlayableFilter(event.target.value)}
+                  disabled={playableLoading}
+                >
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="">All</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                className="admin-button"
+                onClick={() => loadPlayableSubmissions(playableFilter)}
+                disabled={playableLoading}
+              >
+                {playableLoading ? "Loading..." : "Refresh submissions"}
+              </button>
+              {playableStatus ? (
+                <span className="admin-status">{playableStatus}</span>
+              ) : null}
+            </div>
+            {playableLoading && playableSubmissions.length === 0 ? (
+              <div className="admin-status">Loading submissions...</div>
+            ) : playableSubmissions.length === 0 ? (
+              <div className="admin-status">No submissions found.</div>
+            ) : (
+              <div className="admin-log">
+                {playableSubmissions.map((submission) => {
+                  const edit = playableEdits[submission.id] || {};
+                  return (
+                    <div key={submission.id} className="admin-log-entry">
+                      <div className="admin-log-label">
+                        {submission.title || "Untitled playable"}
+                      </div>
+                      <div className="admin-log-meta">
+                        {submission.user?.displayName || submission.user?.email || "Unknown developer"}
+                        {submission.status ? ` - ${submission.status}` : ""}
+                      </div>
+                      {submission.buildUrl ? (
+                        <div className="admin-log-meta">
+                          Review build:{" "}
+                          <a href={submission.buildUrl} target="_blank" rel="noreferrer">
+                            {submission.buildUrl}
+                          </a>
+                        </div>
+                      ) : null}
+                      {submission.sourceUrl ? (
+                        <div className="admin-log-meta">
+                          Source:{" "}
+                          <a href={submission.sourceUrl} target="_blank" rel="noreferrer">
+                            {submission.sourceUrl}
+                          </a>
+                        </div>
+                      ) : null}
+                      <div className="admin-actions">
+                        <label className="admin-field">
+                          Hosted path
+                          <input
+                            type="text"
+                            placeholder="/playables-assets/mygame/index.html"
+                            value={edit.hostedPath || ""}
+                            onChange={(event) =>
+                              updatePlayableEdit(submission.id, "hostedPath", event.target.value)
+                            }
+                          />
+                        </label>
+                        <label className="admin-field">
+                          Hosted id
+                          <input
+                            type="text"
+                            placeholder="my-game"
+                            value={edit.hostedId || ""}
+                            onChange={(event) =>
+                              updatePlayableEdit(submission.id, "hostedId", event.target.value)
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="admin-actions">
+                        <label className="admin-field">
+                          Hosted thumbnail
+                          <input
+                            type="text"
+                            placeholder="/playables-assets/mygame/thumb.png"
+                            value={edit.hostedThumbnail || ""}
+                            onChange={(event) =>
+                              updatePlayableEdit(
+                                submission.id,
+                                "hostedThumbnail",
+                                event.target.value
+                              )
+                            }
+                          />
+                        </label>
+                        <label className="admin-field">
+                          Admin notes
+                          <input
+                            type="text"
+                            placeholder="Notes for the developer"
+                            value={edit.adminNotes || ""}
+                            onChange={(event) =>
+                              updatePlayableEdit(submission.id, "adminNotes", event.target.value)
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="admin-actions">
+                        <button
+                          type="button"
+                          className="admin-button"
+                          onClick={() => handlePlayableDecision(submission.id, "approve")}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-button"
+                          onClick={() => handlePlayableDecision(submission.id, "reject")}
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-button"
+                          onClick={() => handlePlayableDelete(submission.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+          <section className="admin-card">
             <h2>Registered accounts</h2>
             <p>Snapshot of recently created accounts and usernames.</p>
             <div className="admin-actions">
@@ -875,6 +1275,12 @@ export default function AdminPage() {
                           if (meta?.requires && !settings[meta.requires]) {
                             scheduleActionStatus("Permission disabled.");
                             return;
+                          }
+                          if (action === "delete") {
+                            const confirmed = window.confirm(
+                              "Delete this account permanently?"
+                            );
+                            if (!confirmed) return;
                           }
                           runUserAction(user.id, action, buildReasonPayload());
                         }}

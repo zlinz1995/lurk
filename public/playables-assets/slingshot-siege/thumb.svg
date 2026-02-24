@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Slingshot Siege thumbnail">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9cc7ff"/>
+      <stop offset="55%" stop-color="#dff2ff"/>
+      <stop offset="55%" stop-color="#b8de8f"/>
+      <stop offset="100%" stop-color="#8fbe67"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#sky)"/>
+  <rect x="0" y="295" width="640" height="65" fill="#6c4b2c"/>
+  <rect x="430" y="204" width="36" height="92" rx="4" fill="#915f3b"/>
+  <rect x="468" y="204" width="36" height="92" rx="4" fill="#915f3b"/>
+  <rect x="506" y="204" width="36" height="92" rx="4" fill="#915f3b"/>
+  <circle cx="448" cy="284" r="16" fill="#f0785d"/>
+  <circle cx="486" cy="284" r="16" fill="#f0785d"/>
+  <circle cx="524" cy="284" r="16" fill="#f0785d"/>
+  <rect x="118" y="198" width="8" height="96" fill="#714527"/>
+  <rect x="132" y="198" width="8" height="96" fill="#714527"/>
+  <circle cx="170" cy="186" r="16" fill="#43556f"/>
+  <path d="M124 212L170 186L136 212" stroke="#4a3224" stroke-width="6" fill="none"/>
+  <text x="30" y="52" fill="#13263f" font-size="34" font-family="Trebuchet MS, Segoe UI, sans-serif" font-weight="700">
+    Slingshot Siege
+  </text>
+</svg>

@@ -1,0 +1,38 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 512 512"
+  role="img"
+  aria-label="My Game thumbnail"
+>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00baff" />
+      <stop offset="100%" stop-color="#0b1a2f" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)" />
+  <circle cx="170" cy="300" r="85" fill="#07111f" opacity="0.75" />
+  <circle cx="350" cy="210" r="115" fill="#0c2a44" opacity="0.85" />
+  <text
+    x="50%"
+    y="52%"
+    text-anchor="middle"
+    font-family="Space Grotesk, Trebuchet MS, sans-serif"
+    font-size="48"
+    font-weight="700"
+    fill="#e7f6ff"
+  >
+    MY GAME
+  </text>
+  <text
+    x="50%"
+    y="62%"
+    text-anchor="middle"
+    font-family="Space Grotesk, Trebuchet MS, sans-serif"
+    font-size="18"
+    letter-spacing="2"
+    fill="#c1e7ff"
+  >
+    LURK PLAYABLE
+  </text>
+</svg>

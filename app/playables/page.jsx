@@ -1,17 +1,48 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-const formatTags = (tags = []) =>
-  tags.map((tag) => tag.replace(/^\w/, (char) => char.toUpperCase())).join(" • ");
+const AUTH_TOKEN_KEY = "lurkAuthToken";
+
+const getApiContext = () => {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return { base: "", sameOrigin: true };
+  }
+  const base = document.documentElement?.dataset?.apiBase || "";
+  if (!base) {
+    return { base: "", sameOrigin: true };
+  }
+  try {
+    const origin = new URL(base).origin;
+    return { base, sameOrigin: origin === window.location.origin };
+  } catch {
+    return { base: "", sameOrigin: true };
+  }
+};
+
+const buildApiUrl = (base, path) => {
+  if (!path) return base || "";
+  if (/^https?:\/\//i.test(path)) return path;
+  if (!base) return path.startsWith("/") ? path : `/${path}`;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalized}`;
+};
+
+const readAuthToken = () => {
+  try {
+    return window.localStorage?.getItem(AUTH_TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+};
 
 function PlayableCard({ game }) {
-  const tagsLabel = formatTags(game.tags || []);
+  const href = `/playables/play?id=${encodeURIComponent(game.id)}`;
   return (
     <article className="playables-card">
       <div className="playables-card-media">
-        {game.thumbnail ? (
-          <img src={game.thumbnail} alt={`${game.title} cover`} />
+        {game.thumbnailUrl ? (
+          <img src={game.thumbnailUrl} alt={`${game.title} cover`} />
         ) : (
           <div className="playables-card-fallback">No preview</div>
         )}
@@ -20,10 +51,9 @@ function PlayableCard({ game }) {
         <h3>{game.title}</h3>
         <p>{game.description}</p>
         <div className="playables-card-meta">
-          <span>{game.author || "Lurk"}</span>
-          {tagsLabel ? <span>{tagsLabel}</span> : null}
+          <span>{game.developerName || "Lurk"}</span>
         </div>
-        <a className="playables-card-action" href={`/playables/${game.id}`}>
+        <a className="playables-card-action" href={href}>
           Play
         </a>
       </div>
@@ -35,6 +65,26 @@ export default function PlayablesPage() {
   const [games, setGames] = useState([]);
   const [status, setStatus] = useState("Loading playables...");
 
+  const apiFetch = useCallback(async (path, options = {}) => {
+    const apiContext = getApiContext();
+    const headers = new Headers(options.headers || {});
+    const token = readAuthToken();
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    if (options.body && !headers.has("Content-Type")) {
+      if (!(options.body instanceof FormData)) {
+        headers.set("Content-Type", "application/json");
+      }
+    }
+    const url = buildApiUrl(apiContext.base, path);
+    return fetch(url, {
+      ...options,
+      headers,
+      credentials: apiContext.sameOrigin ? "include" : "omit",
+    });
+  }, []);
+
   useEffect(() => {
     document.body.dataset.page = "playables";
     return () => {
@@ -44,7 +94,7 @@ export default function PlayablesPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/playables/manifest.json")
+    apiFetch("/playables/manifest")
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
@@ -59,7 +109,7 @@ export default function PlayablesPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [apiFetch]);
 
   const featured = useMemo(() => games.slice(0, 1), [games]);
 
@@ -73,6 +123,9 @@ export default function PlayablesPage() {
               Instant games that run right inside Lurk. No installs, no wait.
             </p>
           </div>
+          <a className="playables-secondary-action" href="/developer">
+            Developer Portal
+          </a>
         </section>
 
         {featured.length ? (
@@ -83,12 +136,15 @@ export default function PlayablesPage() {
                 Kick things off with our first playable, built on the new SDK and
                 tuned for fast sessions.
               </p>
-              <a className="playables-primary-action" href={`/playables/${featured[0].id}`}>
+              <a
+                className="playables-primary-action"
+                href={`/playables/play?id=${encodeURIComponent(featured[0].id)}`}
+              >
                 Play {featured[0].title}
               </a>
             </div>
             <div className="playables-feature-card">
-              <img src={featured[0].thumbnail} alt={`${featured[0].title} cover`} />
+              <img src={featured[0].thumbnailUrl} alt={`${featured[0].title} cover`} />
             </div>
           </section>
         ) : null}

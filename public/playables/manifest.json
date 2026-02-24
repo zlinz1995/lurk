@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-02-05T00:00:00Z",
+  "updatedAt": "2026-02-24T00:00:00Z",
   "games": [
     {
       "id": "pong",
@@ -13,6 +13,18 @@
       "minPlayers": 1,
       "maxPlayers": 1,
       "tags": ["arcade", "classic", "reflex"]
+    },
+    {
+      "id": "slingshot-siege",
+      "title": "Slingshot Siege",
+      "description": "Original slingshot puzzle-action game. Launch stones and clear fortress targets.",
+      "author": "Lurk",
+      "path": "/playables-assets/slingshot-siege/index.html",
+      "thumbnail": "/playables-assets/slingshot-siege/thumb.svg",
+      "orientation": "landscape",
+      "minPlayers": 1,
+      "maxPlayers": 1,
+      "tags": ["arcade", "physics", "aiming"]
     }
   ]
 }

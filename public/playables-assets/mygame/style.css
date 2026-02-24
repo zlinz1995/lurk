@@ -1,0 +1,76 @@
+﻿:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at top, #101826, #070b12 60%);
+  color: #e7f6ff;
+  font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+}
+
+.game-shell {
+  width: min(720px, 92vw);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: rgba(8, 12, 20, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.game-header h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.game-header p {
+  margin: 4px 0 0;
+  color: rgba(231, 246, 255, 0.7);
+}
+
+.game-board {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 10px;
+  background: #05080f;
+}
+
+.game-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.game-controls button {
+  background: linear-gradient(135deg, #00baff, #007aff);
+  color: #04121f;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.game-controls button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.game-status {
+  font-size: 0.9rem;
+  color: rgba(231, 246, 255, 0.7);
+}

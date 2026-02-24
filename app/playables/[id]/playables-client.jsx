@@ -1,10 +1,34 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const SOURCE = "lurk-playables";
 const HOST_SCOPE = "host";
 const GAME_SCOPE = "game";
+
+const getApiContext = () => {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return { base: "", sameOrigin: true };
+  }
+  const base = document.documentElement?.dataset?.apiBase || "";
+  if (!base) {
+    return { base: "", sameOrigin: true };
+  }
+  try {
+    const origin = new URL(base).origin;
+    return { base, sameOrigin: origin === window.location.origin };
+  } catch {
+    return { base: "", sameOrigin: true };
+  }
+};
+
+const buildApiUrl = (base, path) => {
+  if (!path) return base || "";
+  if (/^https?:\/\//i.test(path)) return path;
+  if (!base) return path.startsWith("/") ? path : `/${path}`;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalized}`;
+};
 
 const parseScore = (payload) => {
   if (!payload || typeof payload !== "object") return null;
@@ -47,7 +71,10 @@ export default function PlayablesClient({ id }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/playables/manifest.json")
+    const apiContext = getApiContext();
+    fetch(buildApiUrl(apiContext.base, "/playables/manifest"), {
+      credentials: apiContext.sameOrigin ? "include" : "omit",
+    })
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
@@ -121,15 +148,14 @@ export default function PlayablesClient({ id }) {
   }, []);
 
   useEffect(() => {
+    if (!iframeRef.current) return;
     const handleVisibility = () => {
       if (document.hidden) {
-        pausedBeforeHideRef.current = paused;
         autoPausedRef.current = true;
+        pausedBeforeHideRef.current = paused;
         postToGame("pause", { reason: "hidden" });
         setPaused(true);
-        return;
-      }
-      if (autoPausedRef.current) {
+      } else if (autoPausedRef.current) {
         autoPausedRef.current = false;
         if (!pausedBeforeHideRef.current) {
           postToGame("resume", { reason: "visible" });
@@ -155,7 +181,14 @@ export default function PlayablesClient({ id }) {
 
   const tagLabel = useMemo(() => {
     if (!game?.tags || !game.tags.length) return "";
-    return game.tags.join(" • ");
+    return game.tags.join(" - ");
+  }, [game]);
+
+  const safePlayUrl = useMemo(() => {
+    const url = game?.playUrl || "";
+    if (!url) return "";
+    if (url.startsWith("/playables-assets/")) return url;
+    return "";
   }, [game]);
 
   const handlePauseToggle = () => {
@@ -220,20 +253,26 @@ export default function PlayablesClient({ id }) {
         </div>
 
         <div className="playables-player-meta">
-          <span>{game.author || "Lurk"}</span>
+          <span>{game.developerName || game.author || "Lurk"}</span>
           {game.orientation ? <span>{game.orientation}</span> : null}
           {tagLabel ? <span>{tagLabel}</span> : null}
         </div>
 
         <div className="playables-player-shell" ref={containerRef}>
-          <iframe
-            key={frameKey}
-            ref={iframeRef}
-            title={game.title}
-            src={game.path}
-            className="playables-player-frame"
-            allow="autoplay; fullscreen; gamepad"
-          />
+          {safePlayUrl ? (
+            <iframe
+              key={frameKey}
+              ref={iframeRef}
+              title={game.title}
+              src={safePlayUrl}
+              className="playables-player-frame"
+              allow="autoplay; fullscreen; gamepad"
+              sandbox="allow-scripts allow-pointer-lock"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="playables-empty">This playable is unavailable.</div>
+          )}
         </div>
 
         <div className="playables-player-controls">
@@ -255,8 +294,8 @@ export default function PlayablesClient({ id }) {
         </div>
 
         <div className="playables-player-status">
-          <span>{status || "Status: connected"}</span>
-          <span>{lastEvent || "Waiting for game events."}</span>
+          <span>{status || "Ready."}</span>
+          <span>{lastEvent || ""}</span>
         </div>
       </section>
     </main>

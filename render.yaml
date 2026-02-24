@@ -13,3 +13,5 @@ services:
         value: 8yuy8u@gmail.com
       - key: ADMIN_DISPLAY_NAMES
         value: critical centrist
+      - key: DEVELOPER_EMAILS
+        value: 8yuy8u@gmail.com

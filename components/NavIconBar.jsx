@@ -49,9 +49,13 @@ const isActivePath = (pathname, href, activePrefix) => {
 
 export default function NavIconBar() {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const accountHref = "/account";
+
+  const handleBarToggle = useCallback(() => {
+    setCollapsed((prev) => !prev);
+  }, []);
 
   const loadAdminStatus = useCallback(async () => {
     const token = readAuthToken();
@@ -149,6 +153,19 @@ export default function NavIconBar() {
           ),
         },
         {
+          href: "/about",
+          label: "About",
+          title: "About and Terms",
+          activePrefix: "/about",
+          icon: (
+            <>
+              <circle cx="12" cy="12" r="9"></circle>
+              <rect x="11.2" y="10" width="1.6" height="6" rx="0.8"></rect>
+              <circle cx="12" cy="7.3" r="1.1"></circle>
+            </>
+          ),
+        },
+        {
           href: accountHref,
           label: "Account",
           title: "Account",
@@ -189,26 +206,11 @@ export default function NavIconBar() {
     >
       <button
         type="button"
-        className="nav-icon-link nav-icon-toggle"
+        className="nav-icon-hit-area"
         aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
         aria-expanded={!collapsed}
-        onClick={() => setCollapsed((prev) => !prev)}
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          {collapsed ? (
-            <>
-              <path d="M4 7h16"></path>
-              <path d="M4 12h16"></path>
-              <path d="M4 17h16"></path>
-            </>
-          ) : (
-            <>
-              <path d="M6 6l12 12"></path>
-              <path d="M18 6l-12 12"></path>
-            </>
-          )}
-        </svg>
-      </button>
+        onClick={handleBarToggle}
+      />
       {navLinks.map((link) => {
         const isActive = isActivePath(
           pathname,

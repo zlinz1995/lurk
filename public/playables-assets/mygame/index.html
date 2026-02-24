@@ -1,0 +1,29 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Game</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="game-shell">
+      <header class="game-header">
+        <h1>My Game</h1>
+        <p>Static playable demo for Lurk.</p>
+      </header>
+      <section class="game-board">
+        <canvas id="board" width="640" height="360" aria-label="Game canvas"></canvas>
+      </section>
+      <section class="game-controls">
+        <button id="start" type="button">Start</button>
+        <button id="pause" type="button">Pause</button>
+        <button id="reset" type="button">Reset</button>
+      </section>
+      <section class="game-status" id="status">Ready.</section>
+    </main>
+
+    <script src="/playables/sdk.js"></script>
+    <script src="game.js"></script>
+  </body>
+</html>

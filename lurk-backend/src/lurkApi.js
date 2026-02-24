@@ -21,6 +21,35 @@ const MAX_MEDIA_BYTES = Number(process.env.MAX_MEDIA_BYTES ?? 15 * 1024 * 1024);
 const DATA_DIR = process.env.DATA_DIR ?? "/tmp/lurk-data";
 const DB_PATH = path.join(DATA_DIR, process.env.DB_NAME ?? "threads.db");
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
+const PLAYABLE_MAX_FILE_BYTES = Number(
+  process.env.PLAYABLE_MAX_FILE_BYTES ?? 10 * 1024 * 1024
+);
+const PLAYABLE_MAX_TOTAL_BYTES = Number(
+  process.env.PLAYABLE_MAX_TOTAL_BYTES ?? 50 * 1024 * 1024
+);
+const PLAYABLE_ALLOWED_EXTENSIONS = new Set([
+  ".html",
+  ".css",
+  ".js",
+  ".json",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".svg",
+  ".gif",
+  ".mp3",
+  ".ogg",
+  ".wav",
+  ".mp4",
+  ".webm",
+  ".wasm",
+  ".txt",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".ico",
+]);
 
 const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60 * 1000);
 const REACT_MEMORY_TTL = Number(process.env.REACT_TTL_MS ?? 24 * 60 * 60 * 1000);
@@ -80,6 +109,14 @@ const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS ?? "")
   .split(",")
   .map((value) => Number.parseInt(value, 10))
   .filter((value) => Number.isFinite(value));
+const DEVELOPER_EMAILS = (process.env.DEVELOPER_EMAILS ?? "")
+  .split(",")
+  .map((value) => normalizeEmail(value))
+  .filter(Boolean);
+const DEVELOPER_USER_IDS = (process.env.DEVELOPER_USER_IDS ?? "")
+  .split(",")
+  .map((value) => Number.parseInt(value, 10))
+  .filter((value) => Number.isFinite(value));
 const ADMIN_MATCH_DEV_ONLY = parseBoolean(process.env.ADMIN_MATCH_DEV_ONLY, true);
 const ADMIN_DEV_DEFAULT_NAME = "critical centrist";
 const ADMIN_SETTINGS_CACHE_TTL_MS = Number(
@@ -92,6 +129,7 @@ const DEFAULT_ADMIN_SETTINGS = {
   user_shadow_restrict: true,
   user_force_logout: true,
   user_reset_profile: true,
+  user_delete_accounts: true,
   user_verify_accounts: true,
   user_view_private_metadata: true,
   user_view_moderation_history: true,
@@ -261,6 +299,7 @@ const reactLimiter = createLimiter({ windowMs: 60 * 1000, limit: 90 });
 const reportLimiter = createLimiter({ windowMs: 10 * 60 * 1000, limit: 5 });
 const pingLimiter = createLimiter({ windowMs: 5 * 60 * 1000, limit: 8 });
 const authLimiter = createLimiter({ windowMs: 60 * 1000, limit: 20 });
+const authRelaxedLimiter = createLimiter({ windowMs: 60 * 1000, limit: 120 });
 
 /* -------------------- API -------------------- */
 
@@ -278,6 +317,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   db.pragma("busy_timeout = 5000");
   prepareSchema(db);
   runAdminBootstrap(db);
+  runDeveloperBootstrap(db);
   const runHousekeeping = () => {
     purgeExpiredThreads(db);
     purgeExpiredAuthSessions(db);
@@ -295,7 +335,9 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       crossOriginResourcePolicy: { policy: "cross-origin" },
     })
   );
-  app.use(cors({ origin: "*", methods: ["GET", "POST", "PATCH", "OPTIONS"] }));
+  app.use(
+    cors({ origin: "*", methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] })
+  );
   app.use(express.json({ limit: "2mb" }));
   app.use(express.urlencoded({ extended: true }));
   app.use(morgan(dev ? "dev" : "tiny"));
@@ -347,6 +389,34 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const isAdmin = ensureAdminFlag(db, userRow, dev);
     if (!isAdmin) {
       res.status(403).json({ error: "forbidden" });
+      return null;
+    }
+    return { session, userRow };
+  };
+
+  const requireDeveloper = (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) {
+      return null;
+    }
+    const userRow = db
+      .prepare(
+        `SELECT id, email, display_name, email_verified, is_developer
+         FROM users
+         WHERE id = ?`
+      )
+      .get(session.user.id);
+    if (!userRow) {
+      res.status(401).json({ error: "unauthenticated" });
+      return null;
+    }
+    const isDeveloper = ensureDeveloperFlag(db, userRow);
+    if (!isDeveloper) {
+      res.status(403).json({ error: "developer_only" });
+      return null;
+    }
+    if (!userRow.email_verified) {
+      res.status(403).json({ error: "email_unverified" });
       return null;
     }
     return { session, userRow };
@@ -519,12 +589,12 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
-  app.get("/auth/me", authLimiter, (req, res) => {
+  app.get("/auth/me", authRelaxedLimiter, (req, res) => {
     const session = requireSession(req, res);
     if (!session) return;
     const userRow = db
       .prepare(
-        `SELECT email_verified, avatar_url, bio, is_admin
+        `SELECT email_verified, avatar_url, bio, is_admin, is_developer
          FROM users
          WHERE id = ?`
       )
@@ -536,6 +606,11 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       is_admin: userRow?.is_admin,
     };
     const isAdmin = ensureAdminFlag(db, adminRow, dev);
+    const isDeveloper = ensureDeveloperFlag(db, {
+      id: session.user.id,
+      email: session.user.email,
+      is_developer: userRow?.is_developer,
+    });
     res.json({
       user: {
         ...session.user,
@@ -543,6 +618,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         avatarUrl: resolveAvatarUrlForResponse(req, userRow?.avatar_url || ""),
         bio: userRow?.bio || "",
         isAdmin,
+        isDeveloper,
       },
     });
   });
@@ -572,12 +648,13 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const displayName =
       sanitizeDisplayName(displayNameRaw) || email.split("@")[0] || "User";
     const passwordHash = hashPassword(password);
+    const isDeveloper = shouldGrantDeveloper({ email });
     const result = db
       .prepare(
-        `INSERT INTO users (email, display_name, password_hash, email_verified)
-         VALUES (?, ?, ?, 0)`
+        `INSERT INTO users (email, display_name, password_hash, email_verified, is_developer)
+         VALUES (?, ?, ?, 0, ?)`
       )
-      .run(email, displayName, passwordHash);
+      .run(email, displayName, passwordHash, isDeveloper ? 1 : 0);
 
     const verification = createEmailVerificationToken(db, result.lastInsertRowid);
     const requestOrigin = getRequestOrigin(req);
@@ -617,6 +694,11 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       },
       dev
     );
+    const grantedDeveloper = ensureDeveloperFlag(db, {
+      id: result.lastInsertRowid,
+      email,
+      is_developer: isDeveloper ? 1 : 0,
+    });
     res.json({
       user: {
         id: result.lastInsertRowid,
@@ -624,6 +706,91 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         displayName,
         emailVerified: false,
         isAdmin,
+        isDeveloper: grantedDeveloper,
+      },
+      sessionToken: session.token,
+      verificationLink,
+    });
+  });
+
+  app.post("/auth/register-developer", authLimiter, (req, res) => {
+    const email = normalizeEmail(req?.body?.email || "");
+    const password = String(req?.body?.password || "");
+    const displayNameRaw = req?.body?.displayName || "";
+
+    if (!isValidEmail(email)) {
+      res.status(400).json({ error: "invalid_email" });
+      return;
+    }
+    if (password.length < 8) {
+      res.status(400).json({ error: "password_too_short" });
+      return;
+    }
+
+    const existing = db
+      .prepare(`SELECT id FROM users WHERE email = ?`)
+      .get(email);
+    if (existing) {
+      res.status(409).json({ error: "email_in_use" });
+      return;
+    }
+
+    const displayName =
+      sanitizeDisplayName(displayNameRaw) || email.split("@")[0] || "Developer";
+    const passwordHash = hashPassword(password);
+    const result = db
+      .prepare(
+        `INSERT INTO users (email, display_name, password_hash, email_verified, is_developer)
+         VALUES (?, ?, ?, 0, 1)`
+      )
+      .run(email, displayName, passwordHash);
+
+    const verification = createEmailVerificationToken(db, result.lastInsertRowid);
+    const requestOrigin = getRequestOrigin(req);
+    const redirectParam = req?.body?.redirect || "";
+    const redirectTo =
+      sanitizeRedirect(redirectParam, requestOrigin) ||
+      getDefaultRedirectUrl(requestOrigin);
+    const verificationLink = buildRedirectWithParams(
+      `${requestOrigin || ""}/auth/verify`,
+      {
+        token: verification.token,
+        redirect: redirectTo,
+      }
+    );
+    void sendEmail({
+      to: email,
+      subject: "Verify your Lurk developer email",
+      text: `Welcome to Lurk Developers! Verify your email by visiting: ${verificationLink}`,
+    }).then((result) => {
+      if (!result.ok) {
+        console.warn("verification email not sent", result.reason);
+      }
+    });
+
+    const session = createSession(db, result.lastInsertRowid);
+    setSessionCookie(res, session.token, {
+      maxAgeMs: AUTH_SESSION_TTL_MS,
+      secure: !dev,
+    });
+    const isAdmin = ensureAdminFlag(
+      db,
+      {
+        id: result.lastInsertRowid,
+        email,
+        displayName,
+        is_admin: 0,
+      },
+      dev
+    );
+    res.json({
+      user: {
+        id: result.lastInsertRowid,
+        email,
+        displayName,
+        emailVerified: false,
+        isAdmin,
+        isDeveloper: true,
       },
       sessionToken: session.token,
       verificationLink,
@@ -641,6 +808,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const row = db
       .prepare(
         `SELECT id, email, display_name, password_hash, email_verified, avatar_url, bio, is_admin,
+                is_developer,
                 is_banned, is_suspended, suspended_until
          FROM users WHERE email = ?`
       )
@@ -664,6 +832,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       return;
     }
     const isAdmin = ensureAdminFlag(db, row, dev);
+    const isDeveloper = ensureDeveloperFlag(db, row);
     const session = createSession(db, row.id);
     setSessionCookie(res, session.token, {
       maxAgeMs: AUTH_SESSION_TTL_MS,
@@ -678,6 +847,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         avatarUrl: resolveAvatarUrlForResponse(req, row.avatar_url || ""),
         bio: row.bio || "",
         isAdmin,
+        isDeveloper,
       },
       sessionToken: session.token,
     });
@@ -690,6 +860,26 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     }
     clearSessionCookie(res, { secure: !dev });
     res.json({ ok: true });
+  });
+
+  app.post("/developers/upgrade", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const row = db
+      .prepare(`SELECT id, email_verified, is_developer FROM users WHERE id = ?`)
+      .get(session.user.id);
+    if (!row) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+    if (!row.email_verified) {
+      res.status(403).json({ error: "email_unverified" });
+      return;
+    }
+    if (!row.is_developer) {
+      db.prepare(`UPDATE users SET is_developer = 1 WHERE id = ?`).run(row.id);
+    }
+    res.json({ ok: true, isDeveloper: true });
   });
 
   app.patch("/auth/profile", authLimiter, (req, res) => {
@@ -705,7 +895,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     ).run(displayName || session.user.displayName, avatarUrl || null, bio || null, session.user.id);
 
     const verifiedRow = db
-      .prepare(`SELECT email_verified, is_admin FROM users WHERE id = ?`)
+      .prepare(`SELECT email_verified, is_admin, is_developer FROM users WHERE id = ?`)
       .get(session.user.id);
     const isAdmin = ensureAdminFlag(
       db,
@@ -717,6 +907,11 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       },
       dev
     );
+    const isDeveloper = ensureDeveloperFlag(db, {
+      id: session.user.id,
+      email: session.user.email,
+      is_developer: verifiedRow?.is_developer,
+    });
     res.json({
       user: {
         id: session.user.id,
@@ -726,6 +921,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         bio,
         emailVerified: Boolean(verifiedRow?.email_verified),
         isAdmin,
+        isDeveloper,
       },
     });
   });
@@ -785,7 +981,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       );
       const updatedRow = db
         .prepare(
-          `SELECT email, display_name, avatar_url, bio, email_verified, is_admin
+          `SELECT email, display_name, avatar_url, bio, email_verified, is_admin, is_developer
            FROM users WHERE id = ?`
         )
         .get(session.user.id);
@@ -795,6 +991,11 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         displayName: updatedRow?.display_name || session.user.displayName,
         is_admin: updatedRow?.is_admin,
       }, dev);
+      const isDeveloper = ensureDeveloperFlag(db, {
+        id: session.user.id,
+        email: updatedRow?.email || session.user.email,
+        is_developer: updatedRow?.is_developer,
+      });
       res.json({
         user: {
           id: session.user.id,
@@ -807,6 +1008,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
           bio: updatedRow?.bio || "",
           emailVerified: Boolean(updatedRow?.email_verified),
           isAdmin,
+          isDeveloper,
         },
       });
     });
@@ -904,6 +1106,456 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       if (row.category === "saved" && isSelf) grouped.saved.push(item);
     });
     res.json(grouped);
+  });
+
+  app.get("/playables/manifest", readLimiter, (req, res) => {
+    const session = getSessionFromRequest(req, db);
+    let isAdmin = false;
+    if (session) {
+      const adminRow = db
+        .prepare(`SELECT id, email, display_name, is_admin FROM users WHERE id = ?`)
+        .get(session.user.id);
+      if (adminRow) {
+        isAdmin = ensureAdminFlag(db, adminRow, dev);
+      }
+    }
+    const base = readPlayablesManifestFromDisk();
+    const rows = db
+      .prepare(
+        `SELECT ps.*,
+                u.display_name as user_display_name
+         FROM playable_submissions ps
+         JOIN users u ON u.id = ps.user_id
+         WHERE ps.approved = 1 AND ps.status = 'approved' AND ps.hosted_path IS NOT NULL
+         ORDER BY datetime(ps.created_at) DESC`
+      )
+      .all();
+    const manifest = buildPlayablesManifest({
+      baseManifest: base,
+      submissions: rows,
+      admin: isAdmin,
+    });
+    res.json(manifest);
+  });
+
+  app.get("/playables/submissions", authLimiter, (req, res) => {
+    const ctx = requireDeveloper(req, res);
+    if (!ctx) return;
+    const rows = db
+      .prepare(
+        `SELECT *
+         FROM playable_submissions
+         WHERE user_id = ?
+         ORDER BY datetime(created_at) DESC`
+      )
+      .all(ctx.session.user.id);
+    res.json({
+      submissions: rows.map((row) => serializePlayableSubmission(row)),
+    });
+  });
+
+  app.post("/playables/submissions", authLimiter, (req, res) => {
+    const ctx = requireDeveloper(req, res);
+    if (!ctx) return;
+    if (
+      req?.body?.hostedPath ||
+      req?.body?.hostedId ||
+      req?.body?.hostedThumbnail ||
+      req?.body?.playUrl ||
+      req?.body?.path
+    ) {
+      res.status(400).json({ error: "invalid_submission_fields" });
+      return;
+    }
+
+    const title = sanitizePlayableTitle(req?.body?.title || "");
+    if (!title) {
+      res.status(400).json({ error: "title_required" });
+      return;
+    }
+    const description = sanitizePlayableDescription(req?.body?.description || "");
+    const tags = sanitizePlayableTags(req?.body?.tags);
+    const authorName = sanitizePlayableAuthor(
+      req?.body?.authorName || ctx.userRow.display_name || ""
+    );
+    const buildUrl = sanitizePlayableUrl(req?.body?.buildUrl || "", {
+      allowPlayables: true,
+      allowRemote: true,
+    });
+    if (!buildUrl) {
+      res.status(400).json({ error: "build_url_required" });
+      return;
+    }
+    const sourceUrl = sanitizePlayableUrl(req?.body?.sourceUrl || "", {
+      allowPlayables: true,
+      allowRemote: true,
+    });
+    const thumbnailUrl = sanitizePlayableUrl(req?.body?.thumbnailUrl || "", {
+      allowPlayables: true,
+      allowUploads: true,
+      allowRemote: true,
+    });
+    const suggestedHostedPath = sanitizeHostedPath(buildUrl);
+    const suggestedHostedThumbnail = sanitizeHostedThumbnailPath(thumbnailUrl);
+    const orientation = sanitizePlayableOrientation(req?.body?.orientation || "");
+    const minPlayers = clampInt(req?.body?.minPlayers, 1, 8) ?? 1;
+    const maxPlayers = clampInt(req?.body?.maxPlayers, minPlayers, 8) ?? minPlayers;
+    const now = new Date().toISOString();
+
+    const result = db
+      .prepare(
+        `INSERT INTO playable_submissions
+           (user_id, title, description, tags, author_name, build_url, source_url, thumbnail_url,
+            orientation, min_players, max_players, status, approved, hosted_path,
+            hosted_thumbnail, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
+      )
+      .run(
+        ctx.session.user.id,
+        title,
+        description,
+        JSON.stringify(tags),
+        authorName,
+        buildUrl,
+        sourceUrl,
+        thumbnailUrl,
+        orientation,
+        minPlayers,
+        maxPlayers,
+        suggestedHostedPath,
+        suggestedHostedThumbnail,
+        now,
+        now
+      );
+
+    const submission = db
+      .prepare(`SELECT * FROM playable_submissions WHERE id = ?`)
+      .get(result.lastInsertRowid);
+
+    res.json({
+      submission: serializePlayableSubmission(submission),
+    });
+  });
+
+  app.delete("/playables/submissions/:id", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const userRow = db
+      .prepare(
+        `SELECT id, email, display_name, email_verified, is_developer, is_admin
+         FROM users
+         WHERE id = ?`
+      )
+      .get(session.user.id);
+    if (!userRow) {
+      res.status(401).json({ error: "unauthenticated" });
+      return;
+    }
+    const isAdmin = ensureAdminFlag(db, userRow, dev);
+    if (!isAdmin) {
+      const isDeveloper = ensureDeveloperFlag(db, userRow);
+      if (!isDeveloper) {
+        res.status(403).json({ error: "developer_only" });
+        return;
+      }
+      if (!userRow.email_verified) {
+        res.status(403).json({ error: "email_unverified" });
+        return;
+      }
+    }
+
+    const submissionId = Number.parseInt(req?.params?.id, 10);
+    if (!Number.isFinite(submissionId)) {
+      res.status(400).json({ error: "invalid_submission_id" });
+      return;
+    }
+    const row = db
+      .prepare(`SELECT * FROM playable_submissions WHERE id = ?`)
+      .get(submissionId);
+    if (!row) {
+      res.status(404).json({ error: "submission_not_found" });
+      return;
+    }
+    if (!isAdmin) {
+      if (row.user_id !== session.user.id) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      if (row.status === "approved") {
+        res.status(403).json({ error: "approved_submission_locked" });
+        return;
+      }
+    }
+
+    db.prepare(`DELETE FROM playable_submissions WHERE id = ?`).run(submissionId);
+
+    if (isAdmin) {
+      logAdminAction(db, {
+        userId: userRow.id,
+        action: "playable_submission_deleted",
+        detail: { submissionId, hostedId: row.hosted_id, hostedPath: row.hosted_path },
+        targetUserId: row.user_id,
+      });
+    }
+
+    res.json({ deleted: true, submissionId });
+  });
+
+  app.get("/admin/playables/submissions", authLimiter, (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const status = String(req?.query?.status || "").trim().toLowerCase();
+    const limit = clampInt(req?.query?.limit, 1, 200) ?? 100;
+    const filters = [];
+    const params = [];
+    if (["pending", "approved", "rejected"].includes(status)) {
+      filters.push("ps.status = ?");
+      params.push(status);
+    }
+    const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+    const rows = db
+      .prepare(
+        `SELECT ps.*,
+                u.email as user_email,
+                u.display_name as user_display_name
+         FROM playable_submissions ps
+         JOIN users u ON u.id = ps.user_id
+         ${whereClause}
+         ORDER BY datetime(ps.created_at) DESC
+         LIMIT ?`
+      )
+      .all(...params, limit);
+    res.json({
+      submissions: rows.map((row) =>
+        serializePlayableSubmission(row, { includeUser: true })
+      ),
+    });
+  });
+
+  app.get("/admin/playables/summary", authLimiter, (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const rows = db
+      .prepare(
+        `SELECT status, COUNT(*) as total
+         FROM playable_submissions
+         GROUP BY status`
+      )
+      .all();
+    const summary = { pending: 0, approved: 0, rejected: 0, total: 0 };
+    rows.forEach((row) => {
+      const status = row.status || "";
+      const count = Number(row.total) || 0;
+      summary.total += count;
+      if (status === "pending") summary.pending = count;
+      if (status === "approved") summary.approved = count;
+      if (status === "rejected") summary.rejected = count;
+    });
+    const latest = db
+      .prepare(
+        `SELECT created_at
+         FROM playable_submissions
+         ORDER BY datetime(created_at) DESC
+         LIMIT 1`
+      )
+      .get();
+    res.json({
+      summary: {
+        ...summary,
+        latestAt: latest?.created_at || null,
+      },
+    });
+  });
+
+  app.post("/admin/playables/submissions/:id/approve", authLimiter, (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const submissionId = Number.parseInt(req?.params?.id, 10);
+    if (!Number.isFinite(submissionId)) {
+      res.status(400).json({ error: "invalid_submission_id" });
+      return;
+    }
+    const row = db
+      .prepare(
+        `SELECT ps.*,
+                u.display_name as user_display_name
+         FROM playable_submissions ps
+         JOIN users u ON u.id = ps.user_id
+         WHERE ps.id = ?`
+      )
+      .get(submissionId);
+    if (!row) {
+      res.status(404).json({ error: "submission_not_found" });
+      return;
+    }
+    const hostedPath = sanitizeHostedPath(
+      req?.body?.hostedPath || row.hosted_path || row.build_url || ""
+    );
+    if (!hostedPath) {
+      res.status(400).json({ error: "hosted_path_required" });
+      return;
+    }
+    const validation = validatePlayableAssets(hostedPath);
+    if (!validation.ok) {
+      const issues = Array.isArray(validation.issues)
+        ? validation.issues.map((issue) => ({
+            file: issue.filePath
+              ? path.relative(validation.rootDir || "", issue.filePath)
+              : "",
+            reason: issue.reason || "invalid_asset",
+          }))
+        : null;
+      res.status(400).json({
+        error: "playable_validation_failed",
+        detail: validation.reason || "invalid_assets",
+        issues,
+      });
+      return;
+    }
+    const hostedIdRaw = sanitizePlayableId(req?.body?.hostedId || "");
+    const hostedId = hostedIdRaw || sanitizePlayableId(row.title) || `playable-${row.id}`;
+    const hostedThumbnail = sanitizeHostedThumbnailPath(
+      req?.body?.hostedThumbnail || row.hosted_thumbnail || row.thumbnail_url || ""
+    );
+    const adminNotes = sanitizePlayableDescription(req?.body?.adminNotes || "");
+    const now = new Date().toISOString();
+
+    db.prepare(
+      `UPDATE playable_submissions
+       SET status = 'approved',
+           approved = 1,
+           hosted_id = ?,
+           hosted_path = ?,
+           hosted_thumbnail = ?,
+           admin_notes = ?,
+           reviewed_at = ?,
+           reviewed_by = ?,
+           updated_at = ?
+       WHERE id = ?`
+    ).run(
+      hostedId,
+      hostedPath,
+      hostedThumbnail,
+      adminNotes,
+      now,
+      admin.userRow.id,
+      now,
+      submissionId
+    );
+
+    logAdminAction(db, {
+      userId: admin.userRow.id,
+      action: "playable_submission_approved",
+      detail: { submissionId, hostedId, hostedPath },
+      targetUserId: row.user_id,
+    });
+
+    const updated = db
+      .prepare(
+        `SELECT ps.*,
+                u.email as user_email,
+                u.display_name as user_display_name
+         FROM playable_submissions ps
+         JOIN users u ON u.id = ps.user_id
+         WHERE ps.id = ?`
+      )
+      .get(submissionId);
+
+    res.json({
+      submission: serializePlayableSubmission(updated, { includeUser: true }),
+    });
+  });
+
+  app.post("/admin/playables/submissions/:id/reject", authLimiter, (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const submissionId = Number.parseInt(req?.params?.id, 10);
+    if (!Number.isFinite(submissionId)) {
+      res.status(400).json({ error: "invalid_submission_id" });
+      return;
+    }
+    const row = db
+      .prepare(
+        `SELECT ps.*,
+                u.display_name as user_display_name
+         FROM playable_submissions ps
+         JOIN users u ON u.id = ps.user_id
+         WHERE ps.id = ?`
+      )
+      .get(submissionId);
+    if (!row) {
+      res.status(404).json({ error: "submission_not_found" });
+      return;
+    }
+    const adminNotes = sanitizePlayableDescription(req?.body?.adminNotes || "");
+    const now = new Date().toISOString();
+
+    db.prepare(
+      `UPDATE playable_submissions
+       SET status = 'rejected',
+           approved = 0,
+           admin_notes = ?,
+           reviewed_at = ?,
+           reviewed_by = ?,
+           updated_at = ?
+       WHERE id = ?`
+    ).run(adminNotes, now, admin.userRow.id, now, submissionId);
+
+    logAdminAction(db, {
+      userId: admin.userRow.id,
+      action: "playable_submission_rejected",
+      detail: { submissionId },
+      targetUserId: row.user_id,
+    });
+
+    const updated = db
+      .prepare(
+        `SELECT ps.*,
+                u.email as user_email,
+                u.display_name as user_display_name
+         FROM playable_submissions ps
+         JOIN users u ON u.id = ps.user_id
+         WHERE ps.id = ?`
+      )
+      .get(submissionId);
+
+    res.json({
+      submission: serializePlayableSubmission(updated, { includeUser: true }),
+    });
+  });
+
+  app.delete("/admin/playables/submissions/:id", authLimiter, (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const submissionId = Number.parseInt(req?.params?.id, 10);
+    if (!Number.isFinite(submissionId)) {
+      res.status(400).json({ error: "invalid_submission_id" });
+      return;
+    }
+    const row = db
+      .prepare(
+        `SELECT ps.*,
+                u.display_name as user_display_name
+         FROM playable_submissions ps
+         JOIN users u ON u.id = ps.user_id
+         WHERE ps.id = ?`
+      )
+      .get(submissionId);
+    if (!row) {
+      res.status(404).json({ error: "submission_not_found" });
+      return;
+    }
+
+    db.prepare(`DELETE FROM playable_submissions WHERE id = ?`).run(submissionId);
+
+    logAdminAction(db, {
+      userId: admin.userRow.id,
+      action: "playable_submission_deleted",
+      detail: { submissionId, hostedId: row.hosted_id, hostedPath: row.hosted_path },
+      targetUserId: row.user_id,
+    });
+
+    res.json({ deleted: true, submissionId });
   });
 
   app.get("/admin/settings", authLimiter, (req, res) => {
@@ -1379,6 +2031,36 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, displayName });
   });
 
+  app.post("/admin/users/:id/delete", authLimiter, (req, res) => {
+    const ctx = requireAdminPermission(req, res, "user_delete_accounts");
+    if (!ctx) return;
+    const target = requireTargetUser(req, res);
+    if (!target) return;
+    if (ctx.admin.userRow.id === target.userId) {
+      res.status(400).json({ error: "cannot_delete_self" });
+      return;
+    }
+    const reason = sanitizeReason(req?.body?.reason || "");
+    if (!requireAdminReason(ctx.settings, res, reason)) return;
+    const detail = {
+      userId: target.userId,
+      email: target.userRow.email || "",
+      displayName: target.userRow.display_name || "",
+    };
+    const result = db.prepare(`DELETE FROM users WHERE id = ?`).run(target.userId);
+    if (!result?.changes) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+    logAdminAction(db, {
+      userId: ctx.admin.userRow.id,
+      action: "user.delete",
+      detail,
+      reason,
+    });
+    res.json({ ok: true, deletedUserId: target.userId });
+  });
+
   app.post("/admin/users/:id/verify", authLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_verify_accounts");
     if (!ctx) return;
@@ -1704,7 +2386,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.get("/auth/google", authLimiter, (req, res) => {
+  app.get("/auth/google", authRelaxedLimiter, (req, res) => {
     if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
       res.status(501).json({ error: "google_oauth_not_configured" });
       return;
@@ -1737,7 +2419,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
   });
 
-  app.get("/auth/google/callback", authLimiter, async (req, res) => {
+  app.get(["/auth/google/callback", "/auth/google/fallback"], authRelaxedLimiter, async (req, res) => {
     if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
       res.status(501).send("Google OAuth is not configured.");
       return;
@@ -2048,6 +2730,429 @@ function sanitizeAvatarUrl(value) {
   }
 }
 
+function sanitizePlayableTitle(value) {
+  return String(value || "").trim().slice(0, 80);
+}
+
+function sanitizePlayableDescription(value) {
+  return String(value || "").trim().slice(0, 320);
+}
+
+function sanitizePlayableAuthor(value) {
+  return String(value || "")
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 48);
+}
+
+function normalizePlayableTag(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24);
+}
+
+function sanitizePlayableTags(input) {
+  let list = [];
+  if (Array.isArray(input)) {
+    list = input;
+  } else if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) list = parsed;
+      } catch {
+        list = trimmed.split(",");
+      }
+    } else {
+      list = trimmed.split(",");
+    }
+  }
+  const cleaned = list
+    .map((item) => normalizePlayableTag(item))
+    .filter(Boolean);
+  return Array.from(new Set(cleaned)).slice(0, 6);
+}
+
+function parsePlayableTags(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+function sanitizePlayableUrl(
+  value,
+  { allowUploads = false, allowPlayables = false, allowRemote = false } = {}
+) {
+  if (!value) return "";
+  const trimmed = String(value).trim();
+  if (!trimmed) return "";
+  if (allowUploads && trimmed.startsWith("/uploads/")) return trimmed;
+  if (allowPlayables && trimmed.startsWith("/playables-assets/")) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    if (!allowRemote) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function sanitizePlayableId(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function sanitizePlayableOrientation(value) {
+  const cleaned = String(value || "").trim().toLowerCase();
+  return cleaned === "portrait" ? "portrait" : "landscape";
+}
+
+function sanitizeHostedPath(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  let candidate = trimmed;
+  if (/^(https?:)?\/\//i.test(candidate)) {
+    try {
+      const url = candidate.startsWith("//")
+        ? new URL(`http:${candidate}`)
+        : new URL(candidate);
+      candidate = url.pathname || "";
+    } catch {
+      // Ignore invalid URLs.
+    }
+  } else if (!candidate.startsWith("/")) {
+    if (candidate.startsWith("playables-assets/")) {
+      candidate = `/${candidate}`;
+    }
+  }
+  if (!candidate.startsWith("/playables-assets/")) return "";
+  if (candidate.includes("..")) return "";
+  return candidate;
+}
+
+function sanitizeHostedThumbnailPath(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  let candidate = trimmed;
+  if (/^(https?:)?\/\//i.test(candidate)) {
+    try {
+      const url = candidate.startsWith("//")
+        ? new URL(`http:${candidate}`)
+        : new URL(candidate);
+      candidate = url.pathname || "";
+    } catch {
+      // Ignore invalid URLs.
+    }
+  } else if (!candidate.startsWith("/")) {
+    if (candidate.startsWith("playables-assets/") || candidate.startsWith("uploads/")) {
+      candidate = `/${candidate}`;
+    }
+  }
+  const allowedPrefix =
+    candidate.startsWith("/playables-assets/") || candidate.startsWith("/uploads/");
+  if (!allowedPrefix) return "";
+  if (candidate.includes("..")) return "";
+  return candidate;
+}
+
+function resolvePlayableAssetPath(hostedPath) {
+  const sanitized = sanitizeHostedPath(hostedPath);
+  if (!sanitized) return { ok: false, reason: "invalid_hosted_path" };
+  const relative = sanitized.replace(/^\/+/, "");
+  const cwd = process.cwd();
+  const roots = [cwd, path.join(cwd, "..")];
+  const baseDirs = [
+    ...roots.map((root) => path.join(root, "public")),
+    ...roots.map((root) => path.join(root, "out")),
+  ];
+  for (const baseDir of baseDirs) {
+    const candidate = path.join(baseDir, relative);
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return { ok: true, filePath: candidate, baseDir };
+      }
+    } catch {
+      // Ignore candidate errors.
+    }
+  }
+  return { ok: false, reason: "asset_not_found" };
+}
+
+function listPlayableFiles(rootDir) {
+  const files = [];
+  const stack = [rootDir];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) continue;
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    entries.forEach((entry) => {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile()) {
+        files.push(fullPath);
+      }
+    });
+  }
+  return files;
+}
+
+function scanPlayableSource({ text, filePath, issues }) {
+  const lower = text.toLowerCase();
+  const scriptSrc = /<script[^>]+src=["']([^"']+)["']/gi;
+  let match = null;
+  while ((match = scriptSrc.exec(lower)) !== null) {
+    const src = match[1] || "";
+    if (src.startsWith("http://") || src.startsWith("https://") || src.startsWith("//")) {
+      issues.push({ filePath, reason: "external_script_src" });
+    }
+  }
+
+  const importPattern = /\bimport\s+(?:[^'"]+from\s+)?["'](https?:\/\/|\/\/)/i;
+  if (importPattern.test(text)) {
+    issues.push({ filePath, reason: "external_import" });
+  }
+
+  const dynamicImportPattern = /\bimport\s*\(\s*["'](https?:\/\/|\/\/)/i;
+  if (dynamicImportPattern.test(text)) {
+    issues.push({ filePath, reason: "external_dynamic_import" });
+  }
+
+  const fetchPattern = /\bfetch\s*\(\s*["'](https?:\/\/|\/\/)/i;
+  if (fetchPattern.test(text)) {
+    issues.push({ filePath, reason: "remote_fetch" });
+  }
+
+  const xhrPattern = /\.open\s*\(\s*["'][A-Z]+["']\s*,\s*["'](https?:\/\/|\/\/)/i;
+  if (xhrPattern.test(text)) {
+    issues.push({ filePath, reason: "remote_xhr" });
+  }
+}
+
+function validatePlayableAssets(hostedPath) {
+  const resolved = resolvePlayableAssetPath(hostedPath);
+  if (!resolved.ok) return resolved;
+  const hostedExt = path.extname(resolved.filePath || "").toLowerCase();
+  if (hostedExt !== ".html") {
+    return { ok: false, reason: "hosted_path_not_html", rootDir: resolved.baseDir };
+  }
+  const relative = sanitizeHostedPath(hostedPath).replace(/^\/+/, "");
+  const parts = relative.split("/");
+  if (parts.length < 3) {
+    return { ok: false, reason: "invalid_playable_path" };
+  }
+  const rootDir = path.join(resolved.baseDir, "playables-assets", parts[1]);
+  if (!fs.existsSync(rootDir) || !fs.statSync(rootDir).isDirectory()) {
+    return { ok: false, reason: "playable_root_missing" };
+  }
+  const resolvedFile = path.resolve(resolved.filePath);
+  const resolvedRoot = path.resolve(rootDir) + path.sep;
+  if (!resolvedFile.startsWith(resolvedRoot)) {
+    return { ok: false, reason: "hosted_path_outside_root", rootDir };
+  }
+
+  const files = listPlayableFiles(rootDir);
+  let totalBytes = 0;
+  const issues = [];
+
+  for (const filePath of files) {
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) continue;
+    totalBytes += stats.size;
+    if (stats.size > PLAYABLE_MAX_FILE_BYTES) {
+      issues.push({ filePath, reason: "file_too_large" });
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    if (!PLAYABLE_ALLOWED_EXTENSIONS.has(ext)) {
+      issues.push({ filePath, reason: "extension_not_allowed" });
+    }
+    if (ext === ".html" || ext === ".js") {
+      const text = fs.readFileSync(filePath, "utf8");
+      scanPlayableSource({ text, filePath, issues });
+    }
+  }
+
+  if (totalBytes > PLAYABLE_MAX_TOTAL_BYTES) {
+    issues.push({ filePath: rootDir, reason: "total_size_exceeded" });
+  }
+
+  if (issues.length) {
+    return { ok: false, reason: "playable_validation_failed", issues, rootDir };
+  }
+
+  return { ok: true, filePath: resolved.filePath, rootDir, totalBytes };
+}
+
+function readPlayablesManifestFromDisk() {
+  const roots = [process.cwd(), path.join(process.cwd(), "..")];
+  const candidates = [
+    ...roots.map((root) =>
+      path.join(root, "public", "playables", "manifest.json")
+    ),
+    ...roots.map((root) =>
+      path.join(root, "out", "playables", "manifest.json")
+    ),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      const raw = fs.readFileSync(candidate, "utf8");
+      const data = JSON.parse(raw);
+      if (data && Array.isArray(data.games)) {
+        return data;
+      }
+    } catch {
+      // Ignore malformed manifests.
+    }
+  }
+  return { version: 1, updatedAt: null, games: [] };
+}
+
+function serializePlayableSubmission(row, { includeUser = false } = {}) {
+  const minPlayers =
+    Number.isFinite(row?.min_players) && row.min_players > 0
+      ? row.min_players
+      : 1;
+  const maxPlayers =
+    Number.isFinite(row?.max_players) && row.max_players > 0
+      ? Math.max(row.max_players, minPlayers)
+      : minPlayers;
+  const payload = {
+    id: row.id,
+    title: row.title || "",
+    description: row.description || "",
+    tags: parsePlayableTags(row.tags),
+    authorName: row.author_name || "",
+    buildUrl: row.build_url || "",
+    sourceUrl: row.source_url || "",
+    thumbnailUrl: row.thumbnail_url || "",
+    orientation: row.orientation || "landscape",
+    minPlayers,
+    maxPlayers,
+    status: row.status || "pending",
+    approved: Boolean(row.approved),
+    adminNotes: row.admin_notes || "",
+    hostedId: row.hosted_id || "",
+    hostedPath: row.hosted_path || "",
+    hostedThumbnail: row.hosted_thumbnail || "",
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    reviewedAt: row.reviewed_at || null,
+    reviewedBy: row.reviewed_by || null,
+  };
+  if (includeUser) {
+    payload.user = {
+      id: row.user_id,
+      email: row.user_email || "",
+      displayName: row.user_display_name || "",
+    };
+  }
+  return payload;
+}
+
+function buildPlayablesManifest({ baseManifest, submissions, admin = false }) {
+  const baseGames = Array.isArray(baseManifest?.games) ? baseManifest.games : [];
+  const usedIds = new Set();
+  const games = [];
+
+  baseGames.forEach((game) => {
+    const id =
+      sanitizePlayableId(game?.id || "") ||
+      sanitizePlayableId(game?.title || "");
+    if (!id || usedIds.has(id)) return;
+    const playUrl = sanitizeHostedPath(game?.path || "");
+    if (!playUrl) return;
+    usedIds.add(id);
+    const payload = {
+      id,
+      title: game?.title || "",
+      description: game?.description || "",
+      thumbnailUrl: game?.thumbnail || "",
+      playUrl,
+      developerName: game?.author || "Lurk",
+    };
+    if (admin) {
+      payload.tags = Array.isArray(game?.tags) ? game.tags : [];
+      payload.orientation = game?.orientation || "landscape";
+      payload.minPlayers = Number.isFinite(game?.minPlayers) ? game.minPlayers : 1;
+      payload.maxPlayers = Number.isFinite(game?.maxPlayers) ? game.maxPlayers : 1;
+      payload.source = "builtin";
+    }
+    games.push(payload);
+  });
+
+  submissions.forEach((row) => {
+    if (!row?.hosted_path) return;
+    const playUrl = sanitizeHostedPath(row.hosted_path);
+    if (!playUrl) return;
+    let id = sanitizePlayableId(row.hosted_id || "");
+    if (!id) {
+      id = sanitizePlayableId(row.title) || `playable-${row.id}`;
+    }
+    if (usedIds.has(id)) {
+      id = `${id}-${row.id}`;
+    }
+    usedIds.add(id);
+
+    const tags = parsePlayableTags(row.tags);
+    const minPlayers =
+      Number.isFinite(row?.min_players) && row.min_players > 0
+        ? row.min_players
+        : 1;
+    const maxPlayers =
+      Number.isFinite(row?.max_players) && row.max_players > 0
+        ? Math.max(row.max_players, minPlayers)
+        : minPlayers;
+
+    const payload = {
+      id,
+      title: row.title || "",
+      description: row.description || "",
+      thumbnailUrl: row.hosted_thumbnail || row.thumbnail_url || "",
+      playUrl,
+      developerName: row.author_name || row.user_display_name || "Developer",
+    };
+    if (admin) {
+      payload.tags = tags;
+      payload.orientation = row.orientation || "landscape";
+      payload.minPlayers = minPlayers;
+      payload.maxPlayers = maxPlayers;
+      payload.buildUrl = row.build_url || "";
+      payload.sourceUrl = row.source_url || "";
+      payload.submissionId = row.id;
+      payload.status = row.status || "pending";
+      payload.approved = Boolean(row.approved);
+      payload.hostedPath = row.hosted_path || "";
+      payload.hostedThumbnail = row.hosted_thumbnail || "";
+      payload.source = "submission";
+    }
+    games.push(payload);
+  });
+
+  return {
+    version: baseManifest?.version ?? 1,
+    updatedAt: new Date().toISOString(),
+    games,
+  };
+}
+
 function normalizeAdminName(value) {
   if (!value) return "";
   return String(value)
@@ -2081,6 +3186,17 @@ function shouldGrantAdmin({ userId, email, displayName, dev }) {
   return false;
 }
 
+function shouldGrantDeveloper({ userId, email }) {
+  if (Number.isFinite(userId) && DEVELOPER_USER_IDS.includes(userId)) {
+    return true;
+  }
+  const normalizedEmail = normalizeEmail(email);
+  if (normalizedEmail && DEVELOPER_EMAILS.includes(normalizedEmail)) {
+    return true;
+  }
+  return false;
+}
+
 function resolveIsAdmin({ userRow, dev }) {
   if (!userRow) return false;
   if (userRow.is_admin) return true;
@@ -2089,6 +3205,15 @@ function resolveIsAdmin({ userRow, dev }) {
     email: userRow.email,
     displayName: userRow.display_name ?? userRow.displayName,
     dev,
+  });
+}
+
+function resolveIsDeveloper({ userRow }) {
+  if (!userRow) return false;
+  if (userRow.is_developer) return true;
+  return shouldGrantDeveloper({
+    userId: userRow.id ?? userRow.user_id,
+    email: userRow.email,
   });
 }
 
@@ -2103,6 +3228,23 @@ function ensureAdminFlag(db, userRow, dev) {
   if (!grant || userRow.is_admin) return grant;
   try {
     db.prepare(`UPDATE users SET is_admin = 1 WHERE id = ?`).run(
+      userRow.id ?? userRow.user_id
+    );
+  } catch {
+    // Ignore update failures.
+  }
+  return grant;
+}
+
+function ensureDeveloperFlag(db, userRow) {
+  if (!db || !userRow) return false;
+  const grant = shouldGrantDeveloper({
+    userId: userRow.id ?? userRow.user_id,
+    email: userRow.email,
+  });
+  if (!grant || userRow.is_developer) return grant;
+  try {
+    db.prepare(`UPDATE users SET is_developer = 1 WHERE id = ?`).run(
       userRow.id ?? userRow.user_id
     );
   } catch {
@@ -2903,6 +4045,7 @@ function ensureUserColumns(db) {
   addColumn("avatar_url", "TEXT");
   addColumn("bio", "TEXT");
   addColumn("is_admin", "INTEGER DEFAULT 0");
+  addColumn("is_developer", "INTEGER DEFAULT 0");
   addColumn("is_suspended", "INTEGER DEFAULT 0");
   addColumn("suspended_until", "DATETIME");
   addColumn("suspended_reason", "TEXT");
@@ -2965,6 +4108,29 @@ function ensurePostColumns(db) {
   addColumn("deleted_at", "DATETIME");
   addColumn("deleted_by", "INTEGER");
   addColumn("deleted_reason", "TEXT");
+}
+
+function ensurePlayableSubmissionColumns(db) {
+  if (!db || !tableExists(db, "playable_submissions")) return;
+  const columns = db
+    .prepare("PRAGMA table_info(playable_submissions)")
+    .all()
+    .map((row) => row.name);
+  const existing = new Set(columns);
+  const addColumn = (name, definition) => {
+    if (existing.has(name)) return;
+    db.prepare(`ALTER TABLE playable_submissions ADD COLUMN ${name} ${definition}`).run();
+  };
+  addColumn("approved", "INTEGER DEFAULT 0");
+  try {
+    db.prepare(
+      `UPDATE playable_submissions
+       SET approved = 1
+       WHERE status = 'approved' AND (approved IS NULL OR approved = 0)`
+    ).run();
+  } catch {
+    // Ignore sync failures.
+  }
 }
 
 function ensureAdminActionColumns(db) {
@@ -3042,6 +4208,7 @@ function prepareSchema(db) {
       avatar_url TEXT,
       bio TEXT,
       is_admin INTEGER DEFAULT 0,
+      is_developer INTEGER DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -3059,6 +4226,37 @@ function prepareSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_user_media_user_created ON user_media(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_user_media_category ON user_media(category);
+
+    CREATE TABLE IF NOT EXISTS playable_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      tags TEXT,
+      author_name TEXT,
+      build_url TEXT,
+      source_url TEXT,
+      thumbnail_url TEXT,
+      orientation TEXT,
+      min_players INTEGER,
+      max_players INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      approved INTEGER DEFAULT 0,
+      admin_notes TEXT,
+      hosted_id TEXT,
+      hosted_path TEXT,
+      hosted_thumbnail TEXT,
+      created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at DATETIME,
+      reviewed_at DATETIME,
+      reviewed_by INTEGER,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(reviewed_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_playable_submissions_status
+      ON playable_submissions(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_playable_submissions_user
+      ON playable_submissions(user_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -3168,6 +4366,7 @@ function prepareSchema(db) {
   ensureUserColumns(db);
   ensureThreadColumns(db);
   ensurePostColumns(db);
+  ensurePlayableSubmissionColumns(db);
   ensureAdminSettingsRow(db);
   ensureAdminActionColumns(db);
   ensureRiskFlagColumns(db);
@@ -3226,6 +4425,33 @@ function runAdminBootstrap(db) {
     `INSERT OR REPLACE INTO admin_bootstrap (id, ran_at, detail)
      VALUES (1, ?, ?)`
   ).run(new Date().toISOString(), JSON.stringify(detail));
+}
+
+function runDeveloperBootstrap(db) {
+  if (!db) return;
+  const targetIds = new Set(DEVELOPER_USER_IDS);
+
+  if (DEVELOPER_EMAILS.length > 0) {
+    const placeholders = DEVELOPER_EMAILS.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT id FROM users WHERE email IN (${placeholders})`)
+      .all(...DEVELOPER_EMAILS);
+    rows.forEach((row) => {
+      if (row?.id) targetIds.add(row.id);
+    });
+  }
+
+  if (targetIds.size === 0) return;
+
+  const ids = Array.from(targetIds);
+  const placeholders = ids.map(() => "?").join(",");
+  try {
+    db.prepare(`UPDATE users SET is_developer = 1 WHERE id IN (${placeholders})`).run(
+      ...ids
+    );
+  } catch {
+    // Ignore update failures.
+  }
 }
 
 function purgeExpiredThreads(db) {
