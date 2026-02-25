@@ -277,6 +277,9 @@ const SMTP_USER = process.env.SMTP_USER ?? "";
 const SMTP_PASS = process.env.SMTP_PASS ?? "";
 const SMTP_SECURE = parseBoolean(process.env.SMTP_SECURE, false);
 const SMTP_FROM = process.env.SMTP_FROM ?? process.env.SMTP_USER ?? MOD_ALERT_EMAIL;
+const REPORT_RESPONSE_TIMEOUT_MS = Number(
+  process.env.REPORT_RESPONSE_TIMEOUT_MS ?? 12_000
+);
 
 const ALLOWED_MEDIA_PREFIXES = ["image/", "video/", "audio/"];
 const reactMemory = new Map();
@@ -632,10 +635,15 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       details,
     ].join("\n");
 
-    const sent = await sendEmail({
+    const sendAttempt = sendEmail({
       to: REPORT_DESTINATION_EMAIL || "support@lurk-app.com",
       subject,
       text,
+    });
+    const sent = await withSoftTimeout(sendAttempt, REPORT_RESPONSE_TIMEOUT_MS, {
+      ok: true,
+      accepted: true,
+      reason: "delivery_pending",
     });
     if (!sent.ok) {
       res.status(503).json({
@@ -645,8 +653,9 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       return;
     }
 
-    res.status(201).json({
+    res.status(sent.accepted ? 202 : 201).json({
       ok: true,
+      accepted: Boolean(sent.accepted),
       submittedAt,
       destination: REPORT_DESTINATION_EMAIL || "support@lurk-app.com",
     });
@@ -5364,6 +5373,18 @@ function withTimeout(promise, timeoutMs, label) {
     timer = setTimeout(() => {
       reject(new Error(`${label} timed out after ${timeout}ms`));
     }, timeout);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function withSoftTimeout(promise, timeoutMs, fallbackValue) {
+  const timeout = Number(timeoutMs);
+  if (!Number.isFinite(timeout) || timeout <= 0) return promise;
+  let timer = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(fallbackValue), timeout);
   });
   return Promise.race([promise, timeoutPromise]).finally(() => {
     if (timer) clearTimeout(timer);
