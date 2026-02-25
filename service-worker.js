@@ -1,5 +1,5 @@
-// Lurk service worker - caches core assets for offline use
-const CACHE_NAME = 'lurk-v3';
+// Lurk service worker - cache static assets, but keep HTML fresh.
+const CACHE_NAME = 'lurk-v4';
 const ASSETS = [
   '/',
   '/index.html',
@@ -30,7 +30,9 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch - serve cached assets when offline
+// Fetch strategy:
+// - HTML/documents: network-first (prevents stale app pages)
+// - Static assets: cache-first with background refresh
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -51,17 +53,42 @@ self.addEventListener('fetch', (event) => {
   // Skip API and cross-origin requests so thread/post data is always fresh
   if (request.method !== 'GET' || !isSameOrigin || isSocket || isApi) return;
 
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request)
+  const isDocument =
+    request.mode === 'navigate' ||
+    request.destination === 'document' ||
+    accept.includes('text/html');
+
+  if (isDocument) {
+    event.respondWith(
+      fetch(request)
         .then((response) => {
-          // Cache new files on the fly
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           return response;
         })
-        .catch(() => caches.match('/index.html')); // fallback offline
+        .catch(async () => {
+          const cached = await caches.match(request);
+          if (cached) return cached;
+          return caches.match('/index.html');
+        })
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(request).then((cached) => {
+      const networkFetch = fetch(request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          return response;
+        });
+
+      if (cached) {
+        event.waitUntil(networkFetch.catch(() => null));
+        return cached;
+      }
+      return networkFetch.catch(() => caches.match('/index.html'));
     })
   );
 });

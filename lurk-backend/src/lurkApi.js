@@ -237,6 +237,13 @@ const USER_SETTING_SELECTS = {
   identity_display_name_visibility: new Set(["public", "followers", "private"]),
   advanced_refresh_rate: new Set(["low", "normal", "high"]),
 };
+
+const emptyProfileDetails = Object.freeze({
+  name: "",
+  age: null,
+  gender: "",
+  interests: "",
+});
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID ?? "").trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET ?? "").trim();
 const GOOGLE_REDIRECT_URI = (process.env.GOOGLE_REDIRECT_URI ?? "").trim();
@@ -259,6 +266,11 @@ const CHAT_HISTORY_KEY_PREFIX =
   process.env.CHAT_HISTORY_KEY_PREFIX ?? "lurk:chat:";
 
 const MOD_ALERT_EMAIL = process.env.MOD_ALERT_EMAIL ?? "z.linz@outlook.com";
+const REPORT_DESTINATION_EMAIL = (
+  process.env.REPORT_DESTINATION_EMAIL ?? "support@lurk-app.com"
+)
+  .trim()
+  .toLowerCase();
 const SMTP_HOST = process.env.SMTP_HOST ?? "";
 const SMTP_PORT = Number(process.env.SMTP_PORT ?? 587);
 const SMTP_USER = process.env.SMTP_USER ?? "";
@@ -589,12 +601,70 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
+  app.post("/reports", reportLimiter, async (req, res) => {
+    const category = sanitizeReportField(req?.body?.category, 80).toLowerCase();
+    const impact = sanitizeReportField(req?.body?.impact, 80);
+    const link = sanitizeReportField(req?.body?.link, 500);
+    const details = sanitizeReportField(req?.body?.details, 4000);
+    const contact = sanitizeReportContact(req?.body?.contact);
+
+    if (!category || !impact || !link || !details) {
+      res.status(400).json({ error: "invalid_report_payload" });
+      return;
+    }
+
+    const session = getSessionFromRequest(req, db);
+    const reporter = session
+      ? `User #${session.user.id} (${session.user.email})`
+      : "Anonymous";
+    const submittedAt = new Date().toISOString();
+    const sourceIp = sanitizeReportField(req.ip || "", 120);
+    const userAgent = sanitizeReportField(req?.headers?.["user-agent"] || "", 300);
+    const subject = `[Lurk Report] ${category} | ${impact}`;
+    const text = [
+      "New Lurk user report",
+      `Submitted: ${submittedAt}`,
+      `Category: ${category}`,
+      `Impact: ${impact}`,
+      `Reporter: ${reporter}`,
+      `Contact: ${contact || "not provided"}`,
+      `IP: ${sourceIp || "unknown"}`,
+      `User-Agent: ${userAgent || "unknown"}`,
+      "",
+      "Links / Thread IDs:",
+      link,
+      "",
+      "Details:",
+      details,
+    ].join("\n");
+
+    const sent = await sendEmail({
+      to: REPORT_DESTINATION_EMAIL || "support@lurk-app.com",
+      subject,
+      text,
+    });
+    if (!sent.ok) {
+      res.status(503).json({
+        error: "report_delivery_failed",
+        detail: sent.reason || "send_failed",
+      });
+      return;
+    }
+
+    res.status(201).json({
+      ok: true,
+      submittedAt,
+      destination: REPORT_DESTINATION_EMAIL || "support@lurk-app.com",
+    });
+  });
+
   app.get("/auth/me", authRelaxedLimiter, (req, res) => {
     const session = requireSession(req, res);
     if (!session) return;
     const userRow = db
       .prepare(
-        `SELECT email_verified, avatar_url, bio, is_admin, is_developer
+        `SELECT email_verified, avatar_url, bio, is_admin, is_developer,
+                profile_name, profile_age, profile_gender, profile_interests
          FROM users
          WHERE id = ?`
       )
@@ -617,6 +687,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         emailVerified: Boolean(userRow?.email_verified),
         avatarUrl: resolveAvatarUrlForResponse(req, userRow?.avatar_url || ""),
         bio: userRow?.bio || "",
+        profileDetails: getProfileDetailsFromRow(userRow),
         isAdmin,
         isDeveloper,
       },
@@ -627,6 +698,16 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const email = normalizeEmail(req?.body?.email || "");
     const password = String(req?.body?.password || "");
     const displayNameRaw = req?.body?.displayName || "";
+    const profileName = sanitizeOptionalProfileText(req?.body?.profileName || "", 80);
+    const ageResult = sanitizeProfileAge(req?.body?.profileAge);
+    const profileGender = sanitizeOptionalProfileText(
+      req?.body?.profileGender || "",
+      40
+    );
+    const profileInterests = sanitizeOptionalProfileText(
+      req?.body?.profileInterests || "",
+      320
+    );
 
     if (!isValidEmail(email)) {
       res.status(400).json({ error: "invalid_email" });
@@ -634,6 +715,10 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     }
     if (password.length < 8) {
       res.status(400).json({ error: "password_too_short" });
+      return;
+    }
+    if (!ageResult.valid) {
+      res.status(400).json({ error: "invalid_profile_age" });
       return;
     }
 
@@ -651,10 +736,22 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const isDeveloper = shouldGrantDeveloper({ email });
     const result = db
       .prepare(
-        `INSERT INTO users (email, display_name, password_hash, email_verified, is_developer)
-         VALUES (?, ?, ?, 0, ?)`
+        `INSERT INTO users (
+           email, display_name, password_hash, email_verified, is_developer,
+           profile_name, profile_age, profile_gender, profile_interests
+         )
+         VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)`
       )
-      .run(email, displayName, passwordHash, isDeveloper ? 1 : 0);
+      .run(
+        email,
+        displayName,
+        passwordHash,
+        isDeveloper ? 1 : 0,
+        profileName || null,
+        ageResult.value,
+        profileGender || null,
+        profileInterests || null
+      );
 
     const verification = createEmailVerificationToken(db, result.lastInsertRowid);
     const requestOrigin = getRequestOrigin(req);
@@ -705,6 +802,12 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         email,
         displayName,
         emailVerified: false,
+        profileDetails: {
+          name: profileName,
+          age: ageResult.value,
+          gender: profileGender,
+          interests: profileInterests,
+        },
         isAdmin,
         isDeveloper: grantedDeveloper,
       },
@@ -717,6 +820,16 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const email = normalizeEmail(req?.body?.email || "");
     const password = String(req?.body?.password || "");
     const displayNameRaw = req?.body?.displayName || "";
+    const profileName = sanitizeOptionalProfileText(req?.body?.profileName || "", 80);
+    const ageResult = sanitizeProfileAge(req?.body?.profileAge);
+    const profileGender = sanitizeOptionalProfileText(
+      req?.body?.profileGender || "",
+      40
+    );
+    const profileInterests = sanitizeOptionalProfileText(
+      req?.body?.profileInterests || "",
+      320
+    );
 
     if (!isValidEmail(email)) {
       res.status(400).json({ error: "invalid_email" });
@@ -724,6 +837,10 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     }
     if (password.length < 8) {
       res.status(400).json({ error: "password_too_short" });
+      return;
+    }
+    if (!ageResult.valid) {
+      res.status(400).json({ error: "invalid_profile_age" });
       return;
     }
 
@@ -740,10 +857,21 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const passwordHash = hashPassword(password);
     const result = db
       .prepare(
-        `INSERT INTO users (email, display_name, password_hash, email_verified, is_developer)
-         VALUES (?, ?, ?, 0, 1)`
+        `INSERT INTO users (
+           email, display_name, password_hash, email_verified, is_developer,
+           profile_name, profile_age, profile_gender, profile_interests
+         )
+         VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?)`
       )
-      .run(email, displayName, passwordHash);
+      .run(
+        email,
+        displayName,
+        passwordHash,
+        profileName || null,
+        ageResult.value,
+        profileGender || null,
+        profileInterests || null
+      );
 
     const verification = createEmailVerificationToken(db, result.lastInsertRowid);
     const requestOrigin = getRequestOrigin(req);
@@ -789,6 +917,12 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         email,
         displayName,
         emailVerified: false,
+        profileDetails: {
+          name: profileName,
+          age: ageResult.value,
+          gender: profileGender,
+          interests: profileInterests,
+        },
         isAdmin,
         isDeveloper: true,
       },
@@ -808,7 +942,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const row = db
       .prepare(
         `SELECT id, email, display_name, password_hash, email_verified, avatar_url, bio, is_admin,
-                is_developer,
+                is_developer, profile_name, profile_age, profile_gender, profile_interests,
                 is_banned, is_suspended, suspended_until
          FROM users WHERE email = ?`
       )
@@ -846,6 +980,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         emailVerified: Boolean(row.email_verified),
         avatarUrl: resolveAvatarUrlForResponse(req, row.avatar_url || ""),
         bio: row.bio || "",
+        profileDetails: getProfileDetailsFromRow(row),
         isAdmin,
         isDeveloper,
       },
@@ -882,20 +1017,124 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, isDeveloper: true });
   });
 
+  app.get("/auth/profile", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const userRow = db
+      .prepare(
+        `SELECT email_verified, avatar_url, bio, is_admin, is_developer,
+                profile_name, profile_age, profile_gender, profile_interests
+         FROM users WHERE id = ?`
+      )
+      .get(session.user.id);
+    if (!userRow) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+    const isAdmin = ensureAdminFlag(
+      db,
+      {
+        id: session.user.id,
+        email: session.user.email,
+        displayName: session.user.displayName,
+        is_admin: userRow?.is_admin,
+      },
+      dev
+    );
+    const isDeveloper = ensureDeveloperFlag(db, {
+      id: session.user.id,
+      email: session.user.email,
+      is_developer: userRow?.is_developer,
+    });
+    res.json({
+      user: {
+        id: session.user.id,
+        email: session.user.email,
+        displayName: session.user.displayName,
+        avatarUrl: resolveAvatarUrlForResponse(req, userRow?.avatar_url || ""),
+        bio: userRow?.bio || "",
+        profileDetails: getProfileDetailsFromRow(userRow),
+        emailVerified: Boolean(userRow?.email_verified),
+        isAdmin,
+        isDeveloper,
+      },
+    });
+  });
+
   app.patch("/auth/profile", authLimiter, (req, res) => {
     const session = requireSession(req, res);
     if (!session) return;
-    const displayName = sanitizeDisplayName(req?.body?.displayName || "");
-    const avatarUrl = sanitizeAvatarUrl(req?.body?.avatarUrl || "");
-    const bio = sanitizeBio(req?.body?.bio || "");
+
+    const currentRow = db
+      .prepare(
+        `SELECT display_name, avatar_url, bio, profile_name, profile_age, profile_gender,
+                profile_interests, email_verified, is_admin, is_developer
+         FROM users WHERE id = ?`
+      )
+      .get(session.user.id);
+    if (!currentRow) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+
+    const body = req?.body && typeof req.body === "object" ? req.body : {};
+    const hasOwn = (key) => Object.prototype.hasOwnProperty.call(body, key);
+
+    const displayName = hasOwn("displayName")
+      ? sanitizeDisplayName(body.displayName || "")
+      : currentRow.display_name || session.user.displayName;
+    const avatarUrl = hasOwn("avatarUrl")
+      ? sanitizeAvatarUrl(body.avatarUrl || "")
+      : currentRow.avatar_url || "";
+    const bio = hasOwn("bio")
+      ? sanitizeBio(body.bio || "")
+      : currentRow.bio || "";
+    const profileName = hasOwn("profileName")
+      ? sanitizeOptionalProfileText(body.profileName || "", 80)
+      : sanitizeOptionalProfileText(currentRow.profile_name || "", 80);
+    const profileGender = hasOwn("profileGender")
+      ? sanitizeOptionalProfileText(body.profileGender || "", 40)
+      : sanitizeOptionalProfileText(currentRow.profile_gender || "", 40);
+    const profileInterests = hasOwn("profileInterests")
+      ? sanitizeOptionalProfileText(body.profileInterests || "", 320)
+      : sanitizeOptionalProfileText(currentRow.profile_interests || "", 320);
+    const existingProfileAge =
+      Number.isFinite(currentRow.profile_age) &&
+      currentRow.profile_age >= 1 &&
+      currentRow.profile_age <= 120
+        ? currentRow.profile_age
+        : null;
+    const profileAgeResult = hasOwn("profileAge")
+      ? sanitizeProfileAge(body.profileAge)
+      : { valid: true, value: existingProfileAge };
+
+    if (!profileAgeResult.valid) {
+      res.status(400).json({ error: "invalid_profile_age" });
+      return;
+    }
+
     db.prepare(
       `UPDATE users
-       SET display_name = ?, avatar_url = ?, bio = ?
+       SET display_name = ?, avatar_url = ?, bio = ?, profile_name = ?, profile_age = ?,
+           profile_gender = ?, profile_interests = ?
        WHERE id = ?`
-    ).run(displayName || session.user.displayName, avatarUrl || null, bio || null, session.user.id);
+    ).run(
+      displayName || session.user.displayName,
+      avatarUrl || null,
+      bio || null,
+      profileName || null,
+      profileAgeResult.value,
+      profileGender || null,
+      profileInterests || null,
+      session.user.id
+    );
 
     const verifiedRow = db
-      .prepare(`SELECT email_verified, is_admin, is_developer FROM users WHERE id = ?`)
+      .prepare(
+        `SELECT email_verified, is_admin, is_developer, avatar_url, bio, profile_name, profile_age,
+                profile_gender, profile_interests
+         FROM users WHERE id = ?`
+      )
       .get(session.user.id);
     const isAdmin = ensureAdminFlag(
       db,
@@ -917,8 +1156,9 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
         id: session.user.id,
         email: session.user.email,
         displayName: displayName || session.user.displayName,
-        avatarUrl: resolveAvatarUrlForResponse(req, avatarUrl),
-        bio,
+        avatarUrl: resolveAvatarUrlForResponse(req, verifiedRow?.avatar_url || avatarUrl),
+        bio: verifiedRow?.bio || bio || "",
+        profileDetails: getProfileDetailsFromRow(verifiedRow),
         emailVerified: Boolean(verifiedRow?.email_verified),
         isAdmin,
         isDeveloper,
@@ -981,7 +1221,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       );
       const updatedRow = db
         .prepare(
-          `SELECT email, display_name, avatar_url, bio, email_verified, is_admin, is_developer
+          `SELECT email, display_name, avatar_url, bio, email_verified, is_admin, is_developer,
+                  profile_name, profile_age, profile_gender, profile_interests
            FROM users WHERE id = ?`
         )
         .get(session.user.id);
@@ -1006,6 +1247,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
             updatedRow?.avatar_url || avatarPath
           ),
           bio: updatedRow?.bio || "",
+          profileDetails: getProfileDetailsFromRow(updatedRow),
           emailVerified: Boolean(updatedRow?.email_verified),
           isAdmin,
           isDeveloper,
@@ -2018,7 +2260,11 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       `UPDATE users
        SET display_name = ?,
            avatar_url = NULL,
-           bio = NULL
+           bio = NULL,
+           profile_name = NULL,
+           profile_age = NULL,
+           profile_gender = NULL,
+           profile_interests = NULL
        WHERE id = ?`
     ).run(displayName, target.userId);
     logAdminAction(db, {
@@ -2424,28 +2670,57 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       res.status(501).send("Google OAuth is not configured.");
       return;
     }
-    const code = req?.query?.code;
-    const state = req?.query?.state;
+    const requestOrigin = getRequestOrigin(req);
+    const code =
+      typeof req?.query?.code === "string" ? req.query.code.trim() : "";
+    const state =
+      typeof req?.query?.state === "string" ? req.query.state.trim() : "";
+    const oauthErrorRaw =
+      typeof req?.query?.error === "string" ? req.query.error : "";
+    const oauthError = oauthErrorRaw
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "");
+
+    let redirectTo = getDefaultRedirectUrl(requestOrigin, "/account");
+    let stateRow = null;
+    if (state) {
+      stateRow = db
+        .prepare(`SELECT redirect, expires_at FROM oauth_states WHERE state = ?`)
+        .get(state);
+      db.prepare(`DELETE FROM oauth_states WHERE state = ?`).run(state);
+      if (stateRow) {
+        const expiresAt = Date.parse(stateRow.expires_at);
+        if (Number.isFinite(expiresAt) && expiresAt > Date.now()) {
+          redirectTo = sanitizeRedirect(stateRow.redirect, requestOrigin);
+        } else {
+          stateRow = null;
+        }
+      }
+    }
+
+    if (oauthError) {
+      const fail = buildRedirectWithParams(redirectTo, {
+        error: `google_${oauthError}`,
+      });
+      res.redirect(fail);
+      return;
+    }
     if (!code || !state) {
-      res.status(400).send("Invalid OAuth response.");
+      const fail = buildRedirectWithParams(redirectTo, {
+        error: "google_invalid_oauth_response",
+      });
+      res.redirect(fail);
       return;
     }
-    const stateRow = db
-      .prepare(`SELECT redirect, expires_at FROM oauth_states WHERE state = ?`)
-      .get(state);
-    db.prepare(`DELETE FROM oauth_states WHERE state = ?`).run(state);
     if (!stateRow) {
-      res.status(400).send("OAuth state expired.");
-      return;
-    }
-    const expiresAt = Date.parse(stateRow.expires_at);
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-      res.status(400).send("OAuth state expired.");
+      const fail = buildRedirectWithParams(redirectTo, {
+        error: "google_oauth_state_expired",
+      });
+      res.redirect(fail);
       return;
     }
 
-    const requestOrigin = getRequestOrigin(req);
-    const redirectTo = sanitizeRedirect(stateRow.redirect, requestOrigin);
     const redirectUri =
       GOOGLE_REDIRECT_URI ||
       (requestOrigin ? `${requestOrigin}/auth/google/callback` : "");
@@ -2716,6 +2991,25 @@ function sanitizeBio(value) {
   return String(value).trim().slice(0, 280);
 }
 
+function sanitizeReportField(value, maxLength = 400) {
+  if (value === undefined || value === null) return "";
+  return String(value)
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeReportContact(value) {
+  const normalized = sanitizeReportField(value, 120);
+  if (!normalized) return "";
+  if (normalized.includes("@")) {
+    const email = normalizeEmail(normalized);
+    return isValidEmail(email) ? email : "";
+  }
+  return normalized.startsWith("@") ? normalized.slice(0, 60) : normalized;
+}
+
 function sanitizeAvatarUrl(value) {
   if (!value) return "";
   const trimmed = String(value).trim();
@@ -2728,6 +3022,38 @@ function sanitizeAvatarUrl(value) {
   } catch {
     return "";
   }
+}
+
+function sanitizeOptionalProfileText(value, maxLength = 120) {
+  if (value === undefined || value === null) return "";
+  return String(value)
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeProfileAge(value) {
+  if (value === undefined || value === null) return { valid: true, value: null };
+  const trimmed = String(value).trim();
+  if (!trimmed) return { valid: true, value: null };
+  if (!/^\d{1,3}$/.test(trimmed)) {
+    return { valid: false, value: null };
+  }
+  const numeric = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(numeric) || numeric < 1 || numeric > 120) {
+    return { valid: false, value: null };
+  }
+  return { valid: true, value: numeric };
+}
+
+function getProfileDetailsFromRow(row) {
+  if (!row) return { ...emptyProfileDetails };
+  return {
+    name: sanitizeOptionalProfileText(row.profile_name || "", 80),
+    age: Number.isFinite(row.profile_age) ? row.profile_age : null,
+    gender: sanitizeOptionalProfileText(row.profile_gender || "", 40),
+    interests: sanitizeOptionalProfileText(row.profile_interests || "", 320),
+  };
 }
 
 function sanitizePlayableTitle(value) {
@@ -4044,6 +4370,10 @@ function ensureUserColumns(db) {
   addColumn("email_verified_at", "DATETIME");
   addColumn("avatar_url", "TEXT");
   addColumn("bio", "TEXT");
+  addColumn("profile_name", "TEXT");
+  addColumn("profile_age", "INTEGER");
+  addColumn("profile_gender", "TEXT");
+  addColumn("profile_interests", "TEXT");
   addColumn("is_admin", "INTEGER DEFAULT 0");
   addColumn("is_developer", "INTEGER DEFAULT 0");
   addColumn("is_suspended", "INTEGER DEFAULT 0");
@@ -4207,6 +4537,10 @@ function prepareSchema(db) {
       email_verified_at DATETIME,
       avatar_url TEXT,
       bio TEXT,
+      profile_name TEXT,
+      profile_age INTEGER,
+      profile_gender TEXT,
+      profile_interests TEXT,
       is_admin INTEGER DEFAULT 0,
       is_developer INTEGER DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

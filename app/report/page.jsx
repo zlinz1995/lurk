@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { resolveApiBase } from "../src/resolveApiBase.js";
 
 const API_BASE = resolveApiBase(process.env.NEXT_PUBLIC_API_URL);
+const SUPPORT_EMAIL = "support@lurk-app.com";
 const apiPath = (path = "") => {
   const base = API_BASE;
   if (!path) return base;
@@ -13,16 +14,17 @@ const apiPath = (path = "") => {
 
 const reportCategories = [
   { value: "harassment", label: "Harassment or targeted abuse" },
-  { value: "spam", label: "Spam or scams" },
-  { value: "impersonation", label: "Impersonation / deceptive identity" },
-  { value: "illegal", label: "Illegal content" },
-  { value: "nsfw-mislabeled", label: "NSFW not labeled" },
+  { value: "spam", label: "Spam, scams, or malicious links" },
+  { value: "impersonation", label: "Impersonation or deceptive identity" },
+  { value: "illegal", label: "Illegal or dangerous content" },
+  { value: "nsfw-mislabeled", label: "NSFW content not labeled" },
+  { value: "other", label: "Other safety or policy concern" },
 ];
 
 const impactLevels = [
-  "Just a heads up",
-  "Needs moderator review soon",
-  "Urgent safety concern",
+  { value: "heads-up", label: "Heads up" },
+  { value: "review-soon", label: "Needs review soon" },
+  { value: "urgent", label: "Urgent safety concern" },
 ];
 
 export default function ReportPage() {
@@ -42,89 +44,110 @@ export default function ReportPage() {
       });
 
       if (!response.ok) {
-        throw new Error("Report submission failed");
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || "Report submission failed");
       }
 
       form.reset();
       setReportStatus({
         state: "success",
-        message: "Report sent. Thank you for keeping Lurk safe.",
+        message: "Report sent to support. Thank you for helping keep Lurk safe.",
       });
     } catch (error) {
       console.error(error);
       setReportStatus({
         state: "error",
-        message: "Something went wrong. Please try again or email us directly.",
+        message: `Could not submit report right now. Email ${SUPPORT_EMAIL} directly.`,
       });
     }
   }, []);
 
   return (
-    <>
-      <header className="header">
-        <img src="/favicon.png" alt="Lurk logo" className="logo" />
-        <h1>Report a Problem</h1>
-        <p className="tagline">Fast pathways to keep Lurk safe for everyone.</p>
-      </header>
+    <main className="report-page">
+      <section className="report-shell">
+        <header className="report-header">
+          <p className="report-kicker">Safety Desk</p>
+          <h1 className="report-title">Report a Problem</h1>
+          <p className="report-subtitle">
+            Structured reporting helps us triage quickly and route incidents to the
+            right reviewer.
+          </p>
+        </header>
 
-      <main>
-        <section className="glass-card">
-          <h2 className="home-section-title">Submit a report</h2>
-          <div className="blog-card" style={{ gridColumn: "1 / -1", padding: "32px" }}>
-            <form id="report-form" className="report-form" onSubmit={handleReportSubmit}>
-              <label htmlFor="report-type">Category</label>
-              <select id="report-type" name="category" required defaultValue="">
-                <option value="" disabled>
-                  Choose a category
-                </option>
-                {reportCategories.map((entry) => (
-                  <option key={entry.value} value={entry.value}>
-                    {entry.label}
+        <div className="report-layout">
+          <form id="report-form" className="report-form report-form-modern" onSubmit={handleReportSubmit}>
+            <section className="report-panel">
+              <h2 className="report-panel-title">Incident details</h2>
+
+              <div className="report-form-row">
+                <label htmlFor="report-type">Category</label>
+                <select id="report-type" name="category" required defaultValue="">
+                  <option value="" disabled>
+                    Select a category
                   </option>
-                ))}
-              </select>
+                  {reportCategories.map((entry) => (
+                    <option key={entry.value} value={entry.value}>
+                      {entry.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              <label htmlFor="report-impact">Impact</label>
-              <select id="report-impact" name="impact" required defaultValue="">
-                <option value="" disabled>
-                  How urgent is this?
-                </option>
-                {impactLevels.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
+              <div className="report-form-row">
+                <label htmlFor="report-impact">Impact</label>
+                <select id="report-impact" name="impact" required defaultValue="">
+                  <option value="" disabled>
+                    Choose impact level
                   </option>
-                ))}
-              </select>
+                  {impactLevels.map((level) => (
+                    <option key={level.value} value={level.value}>
+                      {level.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              <label htmlFor="report-link">Links or thread IDs</label>
-              <input
-                id="report-link"
-                type="text"
-                placeholder="Paste the thread URL or describe where it lives"
-                required
-                name="link"
-              />
+              <div className="report-form-row">
+                <label htmlFor="report-link">Links or thread IDs</label>
+                <input
+                  id="report-link"
+                  type="text"
+                  placeholder="Paste URLs, thread IDs, usernames, or room codes"
+                  required
+                  name="link"
+                />
+              </div>
 
-              <label htmlFor="report-details">Details</label>
-              <textarea
-                id="report-details"
-                name="details"
-                rows={5}
-                placeholder="Describe what happened, who was involved, and why it breaks the rules."
-                required
-              />
+              <div className="report-form-row">
+                <label htmlFor="report-details">Details</label>
+                <textarea
+                  id="report-details"
+                  name="details"
+                  rows={6}
+                  placeholder="Describe what happened, who was involved, and what policy or rule was violated."
+                  required
+                />
+              </div>
+            </section>
 
-              <label htmlFor="report-contact">Contact (optional)</label>
-              <input
-                id="report-contact"
-                type="email"
-                placeholder="Email or @handle so we can follow up"
-                name="contact"
-              />
+            <section className="report-panel">
+              <h2 className="report-panel-title">Follow up</h2>
 
-              <button type="submit" disabled={reportStatus.state === "loading"}>
-                {reportStatus.state === "loading" ? "Sending..." : "Send Report"}
-              </button>
+              <div className="report-form-row">
+                <label htmlFor="report-contact">Contact (optional)</label>
+                <input
+                  id="report-contact"
+                  type="text"
+                  placeholder={`Email or @handle (or email ${SUPPORT_EMAIL} directly)`}
+                  name="contact"
+                />
+              </div>
+
+              <div className="report-actions">
+                <button type="submit" disabled={reportStatus.state === "loading"}>
+                  {reportStatus.state === "loading" ? "Sending..." : "Send Report"}
+                </button>
+              </div>
 
               {reportStatus.message ? (
                 <p
@@ -135,10 +158,22 @@ export default function ReportPage() {
                   {reportStatus.message}
                 </p>
               ) : null}
-            </form>
-          </div>
-        </section>
-      </main>
-    </>
+            </section>
+          </form>
+
+          <aside className="report-aside">
+            <section className="report-panel">
+              <h2 className="report-panel-title">Escalation</h2>
+              <p className="report-aside-copy">
+                Reports submitted here are automatically delivered to the support inbox.
+              </p>
+              <a className="report-support-link" href={`mailto:${SUPPORT_EMAIL}`}>
+                {SUPPORT_EMAIL}
+              </a>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </main>
   );
 }

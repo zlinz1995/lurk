@@ -38,6 +38,23 @@ const DEFAULT_SETTINGS = {
   advanced_refresh_rate: "normal",
 };
 
+const EMPTY_PROFILE_DETAILS = {
+  name: "",
+  age: "",
+  gender: "",
+  interests: "",
+};
+
+const normalizeProfileDetails = (user) => ({
+  name: user?.profileDetails?.name || "",
+  age:
+    user?.profileDetails?.age === null || user?.profileDetails?.age === undefined
+      ? ""
+      : String(user.profileDetails.age),
+  gender: user?.profileDetails?.gender || "",
+  interests: user?.profileDetails?.interests || "",
+});
+
 const getApiContext = () => {
   if (typeof document === "undefined" || typeof window === "undefined") {
     return { base: "", sameOrigin: true };
@@ -88,6 +105,8 @@ export default function SettingsPage() {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [profileDetails, setProfileDetails] = useState(EMPTY_PROFILE_DETAILS);
+  const [profilePending, setProfilePending] = useState(false);
 
   const saveCounterRef = useRef({});
   const statusTimerRef = useRef(null);
@@ -136,13 +155,23 @@ export default function SettingsPage() {
     setLoading(true);
     setStatus("");
     try {
-      const res = await apiFetch("/auth/settings");
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setStatus(data?.error || "Unable to load settings.");
+      const [settingsRes, profileRes] = await Promise.all([
+        apiFetch("/auth/settings"),
+        apiFetch("/auth/profile"),
+      ]);
+      const settingsData = await settingsRes.json().catch(() => ({}));
+      const profileData = await profileRes.json().catch(() => ({}));
+      if (!settingsRes.ok) {
+        setStatus(settingsData?.error || "Unable to load settings.");
         return;
       }
-      setSettings({ ...DEFAULT_SETTINGS, ...(data?.settings || {}) });
+      setSettings({ ...DEFAULT_SETTINGS, ...(settingsData?.settings || {}) });
+      if (profileRes.ok) {
+        setProfileDetails(normalizeProfileDetails(profileData?.user));
+      } else {
+        setProfileDetails(EMPTY_PROFILE_DETAILS);
+        setStatus(profileData?.error || "Unable to load profile details.");
+      }
     } catch {
       setStatus("Unable to load settings.");
     } finally {
@@ -185,6 +214,35 @@ export default function SettingsPage() {
     [apiFetch, scheduleStatus, settings]
   );
 
+  const handleProfileDetailsSave = async (event) => {
+    event.preventDefault();
+    if (loading || profilePending) return;
+    setProfilePending(true);
+    setStatus("");
+    try {
+      const res = await apiFetch("/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify({
+          profileName: profileDetails.name,
+          profileAge: profileDetails.age,
+          profileGender: profileDetails.gender,
+          profileInterests: profileDetails.interests,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data?.error || "Unable to save profile details.");
+        return;
+      }
+      setProfileDetails(normalizeProfileDetails(data?.user));
+      scheduleStatus("Profile details saved.");
+    } catch {
+      setStatus("Unable to save profile details.");
+    } finally {
+      setProfilePending(false);
+    }
+  };
+
   const handleSignOut = async () => {
     if (pending) return;
     setPending(true);
@@ -203,6 +261,7 @@ export default function SettingsPage() {
 
   const banner = loading ? "Loading settings..." : status;
   const inputsDisabled = loading || pending;
+  const profileInputsDisabled = loading || pending || profilePending;
 
   return (
     <main className="settings-page">
@@ -221,6 +280,86 @@ export default function SettingsPage() {
         </header>
 
         <div className="settings-grid">
+          <section className="settings-card">
+            <h2>Profile details (optional)</h2>
+            <p>
+              Share as much or as little as you want. These fields are fully
+              voluntary.
+            </p>
+            <form className="settings-form" onSubmit={handleProfileDetailsSave}>
+              <label className="settings-field">
+                Name (optional)
+                <input
+                  type="text"
+                  value={profileDetails.name}
+                  onChange={(event) =>
+                    setProfileDetails((prev) => ({
+                      ...prev,
+                      name: event.target.value,
+                    }))
+                  }
+                  maxLength={80}
+                  disabled={profileInputsDisabled}
+                />
+              </label>
+              <label className="settings-field">
+                Age (optional)
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={profileDetails.age}
+                  onChange={(event) =>
+                    setProfileDetails((prev) => ({
+                      ...prev,
+                      age: event.target.value,
+                    }))
+                  }
+                  disabled={profileInputsDisabled}
+                />
+              </label>
+              <label className="settings-field">
+                Gender (optional)
+                <input
+                  type="text"
+                  value={profileDetails.gender}
+                  onChange={(event) =>
+                    setProfileDetails((prev) => ({
+                      ...prev,
+                      gender: event.target.value,
+                    }))
+                  }
+                  maxLength={40}
+                  disabled={profileInputsDisabled}
+                />
+              </label>
+              <label className="settings-field">
+                Interests (optional)
+                <textarea
+                  rows={3}
+                  value={profileDetails.interests}
+                  onChange={(event) =>
+                    setProfileDetails((prev) => ({
+                      ...prev,
+                      interests: event.target.value,
+                    }))
+                  }
+                  maxLength={320}
+                  disabled={profileInputsDisabled}
+                />
+              </label>
+              <div className="settings-actions">
+                <button
+                  type="submit"
+                  className="settings-button"
+                  disabled={profileInputsDisabled}
+                >
+                  {profilePending ? "Saving..." : "Save profile details"}
+                </button>
+              </div>
+            </form>
+          </section>
+
           <section className="settings-card">
             <h2>Account visibility and discovery</h2>
             <p>Decide how your profile appears across the platform.</p>

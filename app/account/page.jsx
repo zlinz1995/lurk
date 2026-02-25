@@ -5,11 +5,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const AUTH_TOKEN_KEY = "lurkAuthToken";
 
+const resolveClientApiBase = () => {
+  if (typeof document === "undefined") return "";
+  const docEl = document.documentElement;
+  return (
+    docEl?.dataset?.apiBase ||
+    docEl?.dataset?.nativeApiBase ||
+    document.body?.dataset?.apiBase ||
+    document.body?.dataset?.nativeApiBase ||
+    ""
+  );
+};
+
 const getApiContext = () => {
   if (typeof document === "undefined" || typeof window === "undefined") {
     return { base: "", sameOrigin: true };
   }
-  const base = document.documentElement?.dataset?.apiBase || "";
+  const base = resolveClientApiBase();
   if (!base) {
     return { base: "", sameOrigin: true };
   }
@@ -114,6 +126,7 @@ export default function AccountPage() {
 
   const fileInputRef = useRef(null);
   const previewUrlRef = useRef("");
+  const displayNameInputRef = useRef(null);
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
@@ -291,6 +304,10 @@ export default function AccountPage() {
     };
     if (mode === "register") {
       payload.displayName = form.get("displayName");
+      payload.profileName = form.get("profileName");
+      payload.profileAge = form.get("profileAge");
+      payload.profileGender = form.get("profileGender");
+      payload.profileInterests = form.get("profileInterests");
       payload.redirect = `${window.location.origin}/account`;
     }
     try {
@@ -417,6 +434,14 @@ export default function AccountPage() {
     const file = event.dataTransfer?.files?.[0];
     if (file) handleAvatarFile(file);
   };
+
+  const focusDisplayNameInput = useCallback(() => {
+    const input = displayNameInputRef.current;
+    if (!input) return;
+    input.focus();
+    const length = input.value?.length || 0;
+    input.setSelectionRange?.(length, length);
+  }, []);
 
   const handleResetRequest = async (event) => {
     event.preventDefault();
@@ -545,10 +570,28 @@ export default function AccountPage() {
             </div>
             <form className="auth-form" onSubmit={handleSubmit}>
               {mode === "register" ? (
-                <label className="auth-field">
-                  Display name
-                  <input name="displayName" type="text" autoComplete="name" />
-                </label>
+                <>
+                  <label className="auth-field">
+                    Display name
+                    <input name="displayName" type="text" autoComplete="name" />
+                  </label>
+                  <label className="auth-field">
+                    Name (optional)
+                    <input name="profileName" type="text" autoComplete="name" />
+                  </label>
+                  <label className="auth-field">
+                    Age (optional)
+                    <input name="profileAge" type="number" min={1} max={120} />
+                  </label>
+                  <label className="auth-field">
+                    Gender (optional)
+                    <input name="profileGender" type="text" maxLength={40} />
+                  </label>
+                  <label className="auth-field">
+                    Interests (optional)
+                    <textarea name="profileInterests" rows={2} maxLength={320} />
+                  </label>
+                </>
               ) : null}
               <label className="auth-field">
                 Email
@@ -742,6 +785,20 @@ export default function AccountPage() {
               <div className="profile-info">
                 <h1 className="profile-title">
                   {profile.displayName || "Profile"}
+                  {profile.isSelf ? (
+                    <button
+                      type="button"
+                      className="profile-title-edit"
+                      onClick={focusDisplayNameInput}
+                      aria-label="Edit display name"
+                      title="Edit display name"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M4 20h4l10.6-10.6a1.4 1.4 0 0 0 0-2L16.6 5.4a1.4 1.4 0 0 0-2 0L4 16v4z"></path>
+                        <path d="M13.4 6.6l4 4"></path>
+                      </svg>
+                    </button>
+                  ) : null}
                   {isAdmin ? (
                     <span
                       className="profile-admin-key"
@@ -772,6 +829,8 @@ export default function AccountPage() {
                     <label className="auth-field">
                       Display name
                       <input
+                        id="profile-display-name"
+                        ref={displayNameInputRef}
                         type="text"
                         value={profileForm.displayName}
                         onChange={(event) =>

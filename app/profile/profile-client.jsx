@@ -151,6 +151,7 @@ export default function ProfileClient() {
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
   const previewUrlRef = useRef("");
+  const displayNameInputRef = useRef(null);
   const apiBase = getApiContext().base;
 
   const apiFetch = useCallback(async (path, options = {}) => {
@@ -356,6 +357,14 @@ export default function ProfileClient() {
     if (file) handleAvatarFile(file);
   };
 
+  const focusDisplayNameInput = useCallback(() => {
+    const input = displayNameInputRef.current;
+    if (!input) return;
+    input.focus();
+    const length = input.value?.length || 0;
+    input.setSelectionRange?.(length, length);
+  }, []);
+
   const stats = useMemo(() => {
     const savedCount = profile?.isSelf ? library.saved.length : 0;
     return [
@@ -477,6 +486,20 @@ export default function ProfileClient() {
           <div className="profile-info">
             <h1 className="profile-title">
               {profile.displayName || "Profile"}
+              {profile.isSelf ? (
+                <button
+                  type="button"
+                  className="profile-title-edit"
+                  onClick={focusDisplayNameInput}
+                  aria-label="Edit display name"
+                  title="Edit display name"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M4 20h4l10.6-10.6a1.4 1.4 0 0 0 0-2L16.6 5.4a1.4 1.4 0 0 0-2 0L4 16v4z"></path>
+                    <path d="M13.4 6.6l4 4"></path>
+                  </svg>
+                </button>
+              ) : null}
               {profile.isAdmin ? (
                 <span
                   className="profile-admin-key"
@@ -512,6 +535,8 @@ export default function ProfileClient() {
                 <label className="auth-field">
                   Display name
                   <input
+                    id="profile-display-name"
+                    ref={displayNameInputRef}
                     type="text"
                     value={profileForm.displayName}
                     onChange={(event) =>

@@ -984,6 +984,133 @@ body::after {
 }
 
 /* ======================================================================
+   11AA. REPORT PAGE
+   ====================================================================== */
+
+.report-page {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  padding: var(--s-10) var(--s-5) var(--s-12);
+}
+
+.report-shell {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+}
+
+.report-header {
+  text-align: left;
+}
+
+.report-kicker {
+  margin: 0 0 var(--s-2);
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(118, 226, 255, 0.9);
+}
+
+.report-title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  line-height: 1.1;
+}
+
+.report-subtitle {
+  margin: var(--s-3) 0 0;
+  max-width: 760px;
+  color: var(--c-muted);
+  line-height: 1.55;
+}
+
+.report-layout {
+  display: grid;
+  gap: var(--s-4);
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  align-items: start;
+}
+
+.report-form-modern {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.report-panel {
+  background: rgba(13, 20, 34, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--r-md);
+  padding: var(--s-5);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.3);
+}
+
+.report-panel-title {
+  margin: 0 0 var(--s-4);
+  font-size: 1.15rem;
+}
+
+.report-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--s-3);
+}
+
+.report-form-row:last-child {
+  margin-bottom: 0;
+}
+
+.report-form-modern input,
+.report-form-modern select,
+.report-form-modern textarea {
+  margin-bottom: 0;
+}
+
+.report-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.report-aside {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.report-aside-copy {
+  margin: 0;
+  color: var(--c-muted);
+  line-height: 1.5;
+  font-size: 0.92rem;
+}
+
+.report-support-link {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: var(--s-2);
+  border: 1px solid rgba(118, 226, 255, 0.32);
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: rgba(196, 239, 255, 0.95);
+  background: rgba(0, 130, 255, 0.18);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.report-support-link:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 12px rgba(0, 180, 255, 0.3);
+}
+
+/* ======================================================================
    11A. AUTH PAGE
    ====================================================================== */
 
@@ -3563,6 +3690,37 @@ a {
   gap: var(--s-2);
 }
 
+.profile-title-edit {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 16, 26, 0.48);
+  color: rgba(234, 246, 255, 0.88);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.profile-title-edit svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.profile-title-edit:hover {
+  transform: translateY(-1px);
+  border-color: rgba(0, 180, 255, 0.45);
+  color: #8fdfff;
+}
+
 .profile-admin-key {
   display: inline-flex;
   align-items: center;
@@ -3881,13 +4039,25 @@ a {
 }
 
 .settings-field select,
-.settings-field input {
+.settings-field input,
+.settings-field textarea {
   width: 100%;
   padding: 8px 10px;
   border-radius: var(--r-sm);
   border: 1px solid var(--surface-border);
   background: var(--surface-flat);
   color: var(--c-text);
+}
+
+.settings-field textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
 }
 
 .settings-actions {
@@ -4208,6 +4378,14 @@ a {
 }
 
 @media (max-width: 900px) {
+  .report-page {
+    padding: var(--s-8) var(--s-4) var(--s-10);
+  }
+
+  .report-layout {
+    grid-template-columns: 1fr;
+  }
+
   .profile-page {
     padding: var(--s-8) var(--s-4) var(--s-10);
   }
@@ -4232,6 +4410,10 @@ a {
 }
 
 @media (max-width: 600px) {
+  .report-panel {
+    padding: var(--s-4);
+  }
+
   .profile-avatar {
     width: 140px;
     height: 140px;
