@@ -1,5 +1,5 @@
 // Lurk service worker - cache static assets, but keep HTML fresh.
-const CACHE_NAME = 'lurk-v4';
+const CACHE_NAME = 'lurk-v5';
 const ASSETS = [
   '/',
   '/index.html',

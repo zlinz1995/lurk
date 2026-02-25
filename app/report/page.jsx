@@ -5,11 +5,63 @@ import { resolveApiBase } from "../src/resolveApiBase.js";
 
 const API_BASE = resolveApiBase(process.env.NEXT_PUBLIC_API_URL);
 const SUPPORT_EMAIL = "support@lurk-app.com";
+const REPORT_SUBMIT_TIMEOUT_MS = 20_000;
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+const isLocalHost = (hostname = "") =>
+  LOCAL_HOSTS.has(hostname) || hostname.endsWith(".local");
+
 const apiPath = (path = "") => {
   const base = API_BASE;
   if (!path) return base;
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return base ? `${base}${normalized}` : normalized;
+};
+
+const dedupeEndpoints = (items = []) => {
+  const seen = new Set();
+  const result = [];
+  for (const item of items) {
+    if (!item || seen.has(item)) continue;
+    seen.add(item);
+    result.push(item);
+  }
+  return result;
+};
+
+const getReportEndpoints = () => {
+  const configured = apiPath("/reports");
+  if (typeof window === "undefined") {
+    return dedupeEndpoints([configured, "/reports"]);
+  }
+  const onLocalhost = isLocalHost(window.location.hostname || "");
+  if (onLocalhost) {
+    return dedupeEndpoints([configured, "/reports"]);
+  }
+  return dedupeEndpoints(["/reports", configured]);
+};
+
+const postReport = async ({ endpoint, payload, requestId }) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REPORT_SUBMIT_TIMEOUT_MS);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Report-Request-Id": requestId,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || "Report submission failed");
+    }
+    return data;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };
 
 const reportCategories = [
@@ -34,30 +86,52 @@ export default function ReportPage() {
     event.preventDefault();
     const form = event.currentTarget;
     const payload = Object.fromEntries(new FormData(form).entries());
+    const requestId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const endpoints = getReportEndpoints();
 
     setReportStatus({ state: "loading", message: "Sending report..." });
     try {
-      const response = await fetch(apiPath("/reports"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      let result = null;
+      let lastError = null;
+      for (let index = 0; index < endpoints.length; index += 1) {
+        const endpoint = endpoints[index];
+        try {
+          result = await postReport({ endpoint, payload, requestId });
+          break;
+        } catch (error) {
+          lastError = error;
+          const isLastEndpoint = index >= endpoints.length - 1;
+          if (isLastEndpoint) {
+            break;
+          }
+          if (error?.name === "AbortError" && endpoint === "/reports") {
+            break;
+          }
+        }
+      }
 
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data?.error || "Report submission failed");
+      if (!result) {
+        throw lastError || new Error("Report submission failed");
       }
 
       form.reset();
       setReportStatus({
         state: "success",
-        message: "Report sent to support. Thank you for helping keep Lurk safe.",
+        message: result?.accepted
+          ? "Submitted. Delivery confirmation is still processing."
+          : "Submitted. Thank you for helping keep Lurk safe.",
       });
     } catch (error) {
       console.error(error);
       setReportStatus({
         state: "error",
-        message: `Could not submit report right now. Email ${SUPPORT_EMAIL} directly.`,
+        message:
+          error?.name === "AbortError"
+            ? `Report submission timed out. Email ${SUPPORT_EMAIL} directly.`
+            : `Could not submit report right now. Email ${SUPPORT_EMAIL} directly.`,
       });
     }
   }, []);
@@ -145,7 +219,11 @@ export default function ReportPage() {
 
               <div className="report-actions">
                 <button type="submit" disabled={reportStatus.state === "loading"}>
-                  {reportStatus.state === "loading" ? "Sending..." : "Send Report"}
+                  {reportStatus.state === "loading"
+                    ? "Sending..."
+                    : reportStatus.state === "success"
+                      ? "Submitted"
+                      : "Send Report"}
                 </button>
               </div>
 
