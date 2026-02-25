@@ -22,6 +22,7 @@
     wow: { src: "/stickers/wow.svg", label: "Wow" },
     heart: { src: "/stickers/heart.svg", label: "Heart" },
   });
+  const FOUNDERS_PUBLIC_ROOM = "FOUNDERS-CIRCLE";
   const defaultName = createRandomName();
   window.__lurkDisplayName = window.__lurkDisplayName || defaultName;
   const initialPrivateCode = getRoomCodeFromUrl("room");
@@ -205,6 +206,23 @@
   function hydrateAccountProfile(fallbackName) {
     const input = document.getElementById("chat-video-name");
     if (!input) return;
+    const notifyMembership = (user) => {
+      window.__lurkProfile = user || null;
+      const isMember = Boolean(user?.id || getStoredAuthToken());
+      window.__lurkMemberAccess = isMember;
+      window.dispatchEvent(
+        new CustomEvent("lurk-membership-change", {
+          detail: { isMember, user: user || null },
+        })
+      );
+    };
+    if (!window.__lurkMembershipSyncBound) {
+      window.__lurkMembershipSyncBound = true;
+      window.addEventListener("lurk-auth-change", () => {
+        notifyMembership(window.__lurkProfile || null);
+      });
+    }
+    notifyMembership(window.__lurkProfile || null);
     const token = getStoredAuthToken();
     const sameOrigin = isApiSameOrigin();
     if (!token && !sameOrigin) return;
@@ -216,16 +234,18 @@
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        const displayName = data?.user?.displayName || "";
-        if (!displayName) return;
+        const nextUser = data?.user || null;
+        const displayName = nextUser?.displayName || "";
         const current = input.value.trim();
-        if (!current || current === fallbackName) {
+        if (displayName && (!current || current === fallbackName)) {
           input.value = displayName;
           input.dispatchEvent(new Event("input", { bubbles: true }));
         }
-        window.__lurkProfile = data?.user || null;
+        notifyMembership(nextUser);
       })
-      .catch(() => {});
+      .catch(() => {
+        notifyMembership(window.__lurkProfile || null);
+      });
   }
 
   function setupRoomControls() {
@@ -245,6 +265,10 @@
     const copyBtn = document.getElementById("chat-room-copy");
     const status = document.getElementById("chat-room-status");
     const help = document.getElementById("chat-room-help");
+    const modeDropInBtn = document.getElementById("chat-mode-dropin");
+    const modeInviteBtn = document.getElementById("chat-mode-invite");
+    const modeFoundersBtn = document.getElementById("chat-mode-founders");
+    const modeNote = document.getElementById("chat-mode-note");
     const publicList = document.getElementById("chat-public-room-list");
     const controls = document.querySelector(".chat-room-controls");
     if (
@@ -277,9 +301,13 @@
     let newPublicValue = "";
     let newPrivateValue = "";
 
+    const hasMemberAccess = () =>
+      Boolean(window.__lurkProfile?.id || getStoredAuthToken());
+
     const setVisibilityUi = (visibility) => {
       currentVisibility = visibility;
       const isPrivate = visibility === "private";
+      const isMember = hasMemberAccess();
       visibilityToggle.textContent = isPrivate ? "Private" : "Public";
       visibilityToggle.setAttribute("aria-pressed", isPrivate ? "true" : "false");
       visibilityToggle.setAttribute(
@@ -300,7 +328,9 @@
         controls.dataset.visibility = visibility;
       }
       help.textContent = isPrivate
-        ? "Private rooms need an invite code. Use New Room to generate one."
+        ? isMember
+          ? "Private rooms need an invite code. Use New Room to generate one."
+          : "Private invite rooms are members-only. Create an account to unlock."
         : "Public rooms show up for everyone. Use New Room to create one or leave it blank to join the lobby.";
     };
 
@@ -326,6 +356,7 @@
       }
       copyBtn.disabled = roomVisibility !== "private" || !normalized;
       status.dataset.baseText = status.textContent;
+      refreshMemberUi();
     };
 
     const getSelection = () => {
@@ -349,7 +380,40 @@
       }, 2200);
     };
 
+    const refreshMemberUi = () => {
+      const isMember = hasMemberAccess();
+      if (controls) {
+        controls.dataset.memberAccess = isMember ? "true" : "false";
+      }
+      if (modeInviteBtn) {
+        modeInviteBtn.classList.toggle("is-locked", !isMember);
+        modeInviteBtn.setAttribute("aria-disabled", isMember ? "false" : "true");
+      }
+      if (modeFoundersBtn) {
+        modeFoundersBtn.classList.toggle("is-locked", !isMember);
+        modeFoundersBtn.setAttribute("aria-disabled", isMember ? "false" : "true");
+      }
+      if (newPrivateBtn) {
+        newPrivateBtn.disabled = !isMember;
+        newPrivateBtn.title = isMember ? "" : "Members only";
+      }
+      if (modeNote) {
+        modeNote.textContent = isMember
+          ? "Member modes unlocked. Invite-only rooms and Founders Circle are available."
+          : "Guest mode includes public rooms. Register to unlock private invites and Founders Circle access.";
+      }
+      if (!isMember && (window.__lurkRoomVisibility || currentVisibility) === "private") {
+        setRoomState("", { visibility: "public", updateUrl: true, announce: true });
+        updateUi("", "public");
+        flashStatus("Private invite rooms are for members. Create an account to unlock.");
+      }
+    };
+
     const applyRoom = (code, visibility, { updateUrl = true } = {}) => {
+      if (visibility === "private" && !hasMemberAccess()) {
+        flashStatus("Private invite rooms are for members. Create an account to unlock.");
+        return;
+      }
       const normalized =
         visibility === "private"
           ? normalizePrivateCode(code)
@@ -369,6 +433,10 @@
 
     const applySelection = ({ updateUrl = true } = {}) => {
       const selection = getSelection();
+      if (selection.visibility === "private" && !hasMemberAccess()) {
+        flashStatus("Private invite rooms are for members. Create an account to unlock.");
+        return false;
+      }
       if (selection.visibility === "private" && !selection.code) {
         flashStatus("Enter a private invite code to join.");
         return false;
@@ -390,6 +458,10 @@
         publicValue = roomInput.value;
       }
       const nextVisibility = currentVisibility === "private" ? "public" : "private";
+      if (nextVisibility === "private" && !hasMemberAccess()) {
+        flashStatus("Private mode is members-only. Register to unlock.");
+        return;
+      }
       setVisibilityUi(nextVisibility);
       roomInput.value = nextVisibility === "private" ? privateValue : publicValue;
       copyBtn.disabled =
@@ -397,10 +469,29 @@
     });
 
     lobbyBtn.addEventListener("click", () => applyRoom("", "public"));
+    modeDropInBtn?.addEventListener("click", () => applyRoom("", "public"));
+    modeInviteBtn?.addEventListener("click", () => {
+      if (!hasMemberAccess()) {
+        flashStatus("Invite-only mode is for members. Create an account to unlock.");
+        return;
+      }
+      applyRoom(generateRoomCode(), "private");
+    });
+    modeFoundersBtn?.addEventListener("click", () => {
+      if (!hasMemberAccess()) {
+        flashStatus("Founders Circle is for members. Create an account to unlock.");
+        return;
+      }
+      applyRoom(FOUNDERS_PUBLIC_ROOM, "public");
+    });
 
     const setNewRoomVisibility = (visibility) => {
       if (!hasNewPanel) return;
       const nextVisibility = visibility === "private" ? "private" : "public";
+      if (nextVisibility === "private" && !hasMemberAccess()) {
+        flashStatus("Private room creation is members-only.");
+        return;
+      }
       const isPrivate = nextVisibility === "private";
       if (nextVisibility !== newRoomVisibility) {
         if (isPrivate) {
@@ -459,6 +550,10 @@
       );
       newCreateBtn.addEventListener("click", () => {
         const visibility = newRoomVisibility;
+        if (visibility === "private" && !hasMemberAccess()) {
+          flashStatus("Private room creation is members-only.");
+          return;
+        }
         let code =
           visibility === "private"
             ? normalizePrivateCode(newNameInput.value)
@@ -524,6 +619,8 @@
         closeNewRoomPanel();
       }
     });
+    window.addEventListener("lurk-membership-change", refreshMemberUi);
+    window.addEventListener("lurk-auth-change", refreshMemberUi);
 
     window.__lurkApplyRoomFromControls = applySelection;
     window.__lurkJoinPublicRoom = (name) => applyRoom(name, "public");
@@ -1074,6 +1171,7 @@
     const activityLog = document.getElementById("chat-video-log");
     const participantCount = document.getElementById("chat-video-participant-count");
     const onlineCount = document.getElementById("chat-online-count");
+    const onlineCountInline = document.getElementById("chat-online-count-inline");
     const roomStatus = document.getElementById("chat-room-status");
     const audioToggle = document.getElementById("chat-video-toggle-audio");
     const videoToggle = document.getElementById("chat-video-toggle-video");
@@ -1166,6 +1264,9 @@
         participantCount.textContent = displayCount;
         if (onlineCount) {
           onlineCount.textContent = displayCount;
+        }
+        if (onlineCountInline) {
+          onlineCountInline.textContent = displayCount;
         }
       }
     };

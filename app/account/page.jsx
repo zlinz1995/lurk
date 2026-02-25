@@ -74,6 +74,21 @@ const getInitials = (value = "") => {
   return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 };
 
+const MEMBER_PERKS = [
+  {
+    title: "Invite-only room controls",
+    detail: "Create private room codes and copy invite links in one click.",
+  },
+  {
+    title: "Founders Circle access",
+    detail: "Unlock the curated member room for regulars and early adopters.",
+  },
+  {
+    title: "Founding member identity",
+    detail: "Get a visible member marker on your profile for trusted access.",
+  },
+];
+
 export default function AccountPage() {
   const [mode, setMode] = useState("login");
   const [status, setStatus] = useState("");
@@ -502,6 +517,16 @@ export default function AccountPage() {
               Create an account to personalize your Lurk experience, or sign in with
               Google.
             </p>
+            <section className="auth-member-perks" aria-label="Member benefits">
+              <p className="auth-member-perks-kicker">Founding member unlocks</p>
+              <ul>
+                {MEMBER_PERKS.map((perk) => (
+                  <li key={perk.title}>
+                    <strong>{perk.title}.</strong> {perk.detail}
+                  </li>
+                ))}
+              </ul>
+            </section>
             <div className="auth-toggle">
               <button
                 type="button"
@@ -736,6 +761,7 @@ export default function AccountPage() {
                   {profile.createdAt ? (
                     <span>Joined {formatDate(profile.createdAt)}</span>
                   ) : null}
+                  <span className="profile-member-chip">Founding member</span>
                   {profile.isSelf ? <span>Private view</span> : null}
                 </div>
                 {profileStatus ? (

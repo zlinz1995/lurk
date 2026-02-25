@@ -74,6 +74,18 @@ export default function RootLayout({ children }) {
           <div className="chat-panel-content">
             <section className="chat-video-toolbar">
               <span className="chat-video-room-label">Video room</span>
+              <div
+                className="chat-online-tracker chat-online-tracker-inline"
+                role="status"
+                aria-live="polite"
+              >
+                <div className="chat-online-label">Online Now</div>
+                <div className="chat-online-count-row">
+                  <span id="chat-online-count-inline" className="chat-online-count">
+                    0
+                  </span>
+                </div>
+              </div>
               <div className="chat-video-button-row">
                 <button type="button" id="chat-video-start" className="chat-video-link">
                   Join
@@ -97,6 +109,37 @@ export default function RootLayout({ children }) {
             />
             <div className="chat-room-controls" aria-label="Room controls">
               <div className="chat-room-block">
+                <section className="chat-mode-guide" aria-label="Ways to Lurk">
+                  <div className="chat-mode-guide-header">
+                    <span className="chat-mode-guide-title">Ways to Lurk</span>
+                    <a href="/account" className="chat-mode-guide-link">
+                      Unlock member modes
+                    </a>
+                  </div>
+                  <div className="chat-mode-button-row">
+                    <button type="button" id="chat-mode-dropin" className="chat-mode-button">
+                      Drop-In Lobby
+                    </button>
+                    <button
+                      type="button"
+                      id="chat-mode-invite"
+                      className="chat-mode-button chat-mode-button-member"
+                    >
+                      Invite-Only
+                    </button>
+                    <button
+                      type="button"
+                      id="chat-mode-founders"
+                      className="chat-mode-button chat-mode-button-member"
+                    >
+                      Founders Circle
+                    </button>
+                  </div>
+                  <p id="chat-mode-note" className="chat-mode-note">
+                    Guest mode includes public rooms. Register to unlock private invites and
+                    Founders Circle access.
+                  </p>
+                </section>
                 <label htmlFor="chat-room-entry" className="chat-room-label">
                   Room name or invite code
                 </label>
