@@ -11,8 +11,8 @@ import Database from "better-sqlite3";
 import helmet from "helmet";
 import morgan from "morgan";
 import { Server as SocketIOServer } from "socket.io";
+import nodemailer from "nodemailer";
 import getQuantumBits from "./utils/getQuantumBits.js";
-import { createRequire } from "module";
 
 /* -------------------- CONFIG -------------------- */
 
@@ -281,12 +281,6 @@ const SMTP_FROM = process.env.SMTP_FROM ?? process.env.SMTP_USER ?? MOD_ALERT_EM
 const ALLOWED_MEDIA_PREFIXES = ["image/", "video/", "audio/"];
 const reactMemory = new Map();
 const chatHistoryMemory = new Map();
-
-/* -------------------- REQUIRE -------------------- */
-
-const require = createRequire(import.meta.url);
-let nodemailerModule = null;
-let nodemailerAttempted = false;
 
 /* -------------------- RATE LIMITERS -------------------- */
 
@@ -4237,26 +4231,12 @@ function getDefaultRedirectUrl(requestOrigin, fallbackPath = "/account") {
   }
 }
 
-async function loadNodemailer() {
-  if (nodemailerAttempted) return nodemailerModule;
-  nodemailerAttempted = true;
-  try {
-    nodemailerModule = await import("nodemailer");
-    return nodemailerModule;
-  } catch (err) {
-    console.warn("nodemailer module unavailable", err);
-    return null;
-  }
-}
-
 let cachedMailer = null;
 
 async function getMailer() {
   if (cachedMailer) return cachedMailer;
   if (!SMTP_HOST) return null;
-  const module = await loadNodemailer();
-  if (!module) return null;
-  cachedMailer = module.createTransport({
+  cachedMailer = nodemailer.createTransport({
     host: SMTP_HOST,
     port: SMTP_PORT,
     secure: SMTP_SECURE,
