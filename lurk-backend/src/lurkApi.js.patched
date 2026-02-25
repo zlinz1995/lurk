@@ -27,7 +27,7 @@ const REACT_MEMORY_TTL = Number(process?.env.REACT_TTL_MS ?? 24 * 60 * 60 * 1000
 
 const MOD_ALERT_EMAIL = process?.env.MOD_ALERT_EMAIL ?? "z.linz@outlook.com";
 const DEFAULT_FROM_EMAIL =
-  process?.env.SMTP_FROM ?? process?.env.SMTP_USER ?? MOD_ALERT_EMAIL;
+  process?.env.REPORT_EMAIL_FROM ?? MOD_ALERT_EMAIL;
 
 const ALLOWED_MEDIA_PREFIXES = ["image/", "video/", "audio/"];
 const reactMemory = new Map();
@@ -35,8 +35,8 @@ const reactMemory = new Map();
 /* -------------------- REQUIRE -------------------- */
 
 const require = createRequire(import?.meta.url);
-let nodemailerModule = null;
-let nodemailerAttempted = false;
+let resendModule = null;
+let resendAttempted = false;
 
 /* -------------------- RATE LIMITERS -------------------- */
 

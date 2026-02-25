@@ -11,7 +11,7 @@ import Database from "better-sqlite3";
 import helmet from "helmet";
 import morgan from "morgan";
 import { Server as SocketIOServer } from "socket.io";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import getQuantumBits from "./utils/getQuantumBits.js";
 
 /* -------------------- CONFIG -------------------- */
@@ -265,34 +265,13 @@ const CHAT_HISTORY_TTL_SEC = Number(process.env.CHAT_HISTORY_TTL_SEC ?? 3_600);
 const CHAT_HISTORY_KEY_PREFIX =
   process.env.CHAT_HISTORY_KEY_PREFIX ?? "lurk:chat:";
 
-const MOD_ALERT_EMAIL = process.env.MOD_ALERT_EMAIL ?? "z.linz@outlook.com";
 const REPORT_DESTINATION_EMAIL = (
   process.env.REPORT_DESTINATION_EMAIL ?? "support@lurk-app.com"
 )
   .trim()
   .toLowerCase();
-const SMTP_HOST = process.env.SMTP_HOST ?? "";
-const SMTP_PORT = Number(process.env.SMTP_PORT ?? 587);
-const SMTP_USER = process.env.SMTP_USER ?? "";
-const SMTP_PASS = process.env.SMTP_PASS ?? "";
-const SMTP_SECURE = parseBoolean(process.env.SMTP_SECURE, false);
-const SMTP_FROM = process.env.SMTP_FROM ?? process.env.SMTP_USER ?? MOD_ALERT_EMAIL;
-const REPORT_RESPONSE_TIMEOUT_MS = Number(
-  process.env.REPORT_RESPONSE_TIMEOUT_MS ?? 12_000
-);
-const SMTP_CONNECTION_TIMEOUT_MS = Number(
-  process.env.SMTP_CONNECTION_TIMEOUT_MS ?? 8_000
-);
-const SMTP_GREETING_TIMEOUT_MS = Number(
-  process.env.SMTP_GREETING_TIMEOUT_MS ?? 8_000
-);
-const SMTP_SOCKET_TIMEOUT_MS = Number(process.env.SMTP_SOCKET_TIMEOUT_MS ?? 15_000);
-const REPORT_EMAIL_RETRY_ATTEMPTS = Number(
-  process.env.REPORT_EMAIL_RETRY_ATTEMPTS ?? 2
-);
-const REPORT_EMAIL_RETRY_DELAY_MS = Number(
-  process.env.REPORT_EMAIL_RETRY_DELAY_MS ?? 750
-);
+const REPORT_EMAIL_FROM = "Lurk <support@lurk-app.com>";
+const resend = new Resend(process.env.RESEND_API_KEY);
 const REPORT_REQUEST_TTL_MS = Number(
   process.env.REPORT_REQUEST_TTL_MS ?? 10 * 60 * 1000
 );
@@ -664,61 +643,22 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const submittedAt = new Date().toISOString();
     const sourceIp = sanitizeReportField(req.ip || "", 120);
     const userAgent = sanitizeReportField(req?.headers?.["user-agent"] || "", 300);
-    const subject = `[Lurk Report] ${category} | ${impact}`;
-    const text = [
-      "New Lurk user report",
-      `Submitted: ${submittedAt}`,
-      `Category: ${category}`,
-      `Impact: ${impact}`,
-      `Reporter: ${reporter}`,
-      `Contact: ${contact || "not provided"}`,
-      `IP: ${sourceIp || "unknown"}`,
-      `User-Agent: ${userAgent || "unknown"}`,
-      "",
-      "Links / Thread IDs:",
-      link,
-      "",
-      "Details:",
-      details,
-    ].join("\n");
-
-    const destination = REPORT_DESTINATION_EMAIL || "support@lurk-app.com";
-    let sent = null;
+    const destination =
+      process.env.REPORT_DESTINATION_EMAIL ||
+      REPORT_DESTINATION_EMAIL ||
+      "support@lurk-app.com";
     try {
-      sent = await withTimeout(
-        sendReportEmail({
-          to: destination,
-          subject,
-          text,
-        }),
-        REPORT_RESPONSE_TIMEOUT_MS,
-        "report_email_send"
-      );
+      await resend.emails.send({
+        from: "Lurk <support@lurk-app.com>",
+        to: process.env.REPORT_DESTINATION_EMAIL || destination,
+        subject: "New Lurk Report",
+        html: `<p>${escapeHtml(details)}</p>`,
+      });
     } catch (err) {
-      console.warn("report email send pending", err);
-      const payload = {
-        ok: true,
-        accepted: true,
-        detail: "delivery_pending",
-        submittedAt,
-        destination,
-      };
-      if (requestId) {
-        reportRequestCache.set(requestId, {
-          state: "done",
-          response: { status: 202, payload },
-          submittedAt,
-          expiresAt: Date.now() + REPORT_REQUEST_TTL_MS,
-        });
-      }
-      res.status(202).json(payload);
-      return;
-    }
-
-    if (!sent.ok) {
+      console.warn("report email send failed", err);
       const payload = {
         error: "report_delivery_failed",
-        detail: sent.reason || "send_failed",
+        detail: err?.message || "send_failed",
       };
       if (requestId) {
         reportRequestCache.set(requestId, {
@@ -734,12 +674,12 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
 
     const payload = {
       ok: true,
-      accepted: Boolean(sent.accepted),
-      detail: sent.reason || (sent.accepted ? "delivery_pending" : "sent"),
+      accepted: false,
+      detail: "sent",
       submittedAt,
       destination,
     };
-    const statusCode = sent.accepted ? 202 : 201;
+    const statusCode = 201;
     if (requestId) {
       reportRequestCache.set(requestId, {
         state: "done",
@@ -4330,151 +4270,55 @@ function getDefaultRedirectUrl(requestOrigin, fallbackPath = "/account") {
   }
 }
 
-let cachedMailer = null;
-
-async function getMailer() {
-  if (cachedMailer) return cachedMailer;
-  if (!SMTP_HOST) return null;
-  cachedMailer = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-    connectionTimeout: SMTP_CONNECTION_TIMEOUT_MS,
-    greetingTimeout: SMTP_GREETING_TIMEOUT_MS,
-    socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
-  });
-  return cachedMailer;
-}
-
 async function sendEmail({ to, subject, text, html }) {
-  const mailer = await getMailer();
-  if (!mailer) return { ok: false, reason: "smtp_not_configured" };
-  const fromAttempts = getFromAddressAttempts();
-  let lastError = null;
-
-  for (const from of fromAttempts) {
-    try {
-      const info = await withTimeout(
-        mailer.sendMail({
-          from,
-          to,
-          subject,
-          text,
-          html,
-        }),
-        SMTP_SOCKET_TIMEOUT_MS + 1_000,
-        "smtp_send"
-      );
-      return { ok: true, messageId: info?.messageId || null };
-    } catch (err) {
-      lastError = err;
-      if (!shouldRetryWithAlternateFrom(err)) {
-        break;
-      }
-    }
+  if (!process.env.RESEND_API_KEY) {
+    return { ok: false, reason: "resend_not_configured" };
   }
-
-  console.warn("email send failed", lastError);
-  return {
-    ok: false,
-    reason: formatEmailError(lastError),
-  };
-}
-
-async function sendReportEmail({ to, subject, text, html }) {
-  const maxAttempts = clampNumber(REPORT_EMAIL_RETRY_ATTEMPTS, 1, 5, 2);
-  let lastResult = { ok: false, reason: "send_failed" };
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const result = await sendEmail({ to, subject, text, html });
-    if (result.ok) {
-      return {
-        ok: true,
-        accepted: false,
-        attempts: attempt,
-        reason: attempt > 1 ? "sent_after_retry" : "sent",
-      };
-    }
-    lastResult = result;
-    const retryable = isRetryableEmailError(result.reason);
-    if (!retryable || attempt >= maxAttempts) {
-      break;
-    }
-    await waitMs(REPORT_EMAIL_RETRY_DELAY_MS * attempt);
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
+  if (!recipients.length) {
+    return { ok: false, reason: "missing_email_recipient" };
   }
-
-  return {
-    ok: false,
-    accepted: false,
-    reason: lastResult.reason || "send_failed",
-  };
-}
-
-function getFromAddressAttempts() {
-  const primary = sanitizeReportField(SMTP_FROM || SMTP_USER || MOD_ALERT_EMAIL, 320);
-  const fallback = sanitizeReportField(SMTP_USER || "", 320);
-  if (!fallback) return [primary];
-  if (extractEmailAddress(primary) === extractEmailAddress(fallback)) {
-    return [primary];
+  try {
+    const result = await resend.emails.send({
+      from: REPORT_EMAIL_FROM,
+      to: recipients,
+      subject: sanitizeReportField(subject || "Lurk Notification", 200),
+      html: html || textToHtml(text),
+      text: text || undefined,
+    });
+    return { ok: true, id: result?.data?.id || null };
+  } catch (err) {
+    console.warn("email send failed", err);
+    return { ok: false, reason: formatEmailError(err) };
   }
-  return [primary, fallback];
-}
-
-function extractEmailAddress(value = "") {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const match = raw.match(/<([^>]+)>/);
-  const target = (match?.[1] || raw).trim();
-  return target.toLowerCase();
-}
-
-function shouldRetryWithAlternateFrom(error) {
-  const message = formatEmailError(error).toLowerCase();
-  if (!message) return false;
-  return (
-    message.includes("sender address rejected") ||
-    message.includes("invalid from") ||
-    message.includes("mail from command failed")
-  );
-}
-
-function isRetryableEmailError(reason = "") {
-  const message = String(reason || "").toLowerCase();
-  if (!message) return false;
-  return (
-    message.includes("timed out") ||
-    message.includes("timeout") ||
-    message.includes("etimedout") ||
-    message.includes("econnreset") ||
-    message.includes("econnrefused") ||
-    message.includes("connection closed") ||
-    message.includes("greeting never received")
-  );
 }
 
 function formatEmailError(error) {
   if (!error) return "send_failed";
   const code = typeof error?.code === "string" ? error.code : "";
-  const responseCode =
-    Number.isFinite(error?.responseCode) && error.responseCode > 0
-      ? String(error.responseCode)
-      : "";
-  const message = String(error?.message || error || "send_failed");
-  const combined = [code, responseCode, message].filter(Boolean).join(" ").trim();
+  const statusCode = Number.isFinite(error?.statusCode)
+    ? String(error.statusCode)
+    : "";
+  const message = String(
+    error?.message || error?.name || error || "send_failed"
+  );
+  const combined = [code, statusCode, message].filter(Boolean).join(" ").trim();
   return combined || "send_failed";
 }
 
-function clampNumber(value, min, max, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, parsed));
+function textToHtml(value) {
+  const normalized = sanitizeReportField(value || "", 8_000);
+  if (!normalized) return "<p>No details provided.</p>";
+  return `<p>${escapeHtml(normalized)}</p>`;
 }
 
-function waitMs(durationMs) {
-  const timeout = Number(durationMs);
-  if (!Number.isFinite(timeout) || timeout <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, timeout));
+function escapeHtml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function pruneReportRequestCache() {
