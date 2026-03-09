@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const AUTH_TOKEN_KEY = "lurkAuthToken";
+const AUTH_OFFLINE_STATUS =
+  "Auth server is offline. Start the API server or update NEXT_PUBLIC_API_URL.";
 
 const resolveClientApiBase = () => {
   if (typeof document === "undefined") return "";
@@ -156,6 +158,14 @@ export default function AccountPage() {
   const loadCurrentUser = useCallback(async () => {
     try {
       const res = await apiFetch("/auth/me");
+      if (res.status === 404 || res.status >= 500) {
+        setApiReady(false);
+        setStatus((prev) => prev || AUTH_OFFLINE_STATUS);
+        setUser(null);
+        return;
+      }
+      setApiReady(true);
+      setStatus((prev) => (prev === AUTH_OFFLINE_STATUS ? "" : prev));
       if (!res.ok) {
         setUser(null);
         return;
@@ -163,6 +173,8 @@ export default function AccountPage() {
       const data = await res.json().catch(() => ({}));
       setUser(data?.user || null);
     } catch {
+      setApiReady(false);
+      setStatus((prev) => prev || AUTH_OFFLINE_STATUS);
       setUser(null);
     }
   }, [apiFetch]);
@@ -204,25 +216,7 @@ export default function AccountPage() {
       window.history.replaceState({}, "", next);
     }
 
-    const checkApi = async () => {
-      try {
-        const apiContext = getApiContext();
-        if (!apiContext.base) {
-          setApiReady(true);
-          return;
-        }
-        const res = await fetch(buildApiUrl(apiContext.base, "/ready"));
-        if (!res.ok) throw new Error("not_ready");
-        setApiReady(true);
-      } catch {
-        setApiReady(false);
-        setStatus(
-          "Auth server is offline. Start the API server or update NEXT_PUBLIC_API_URL."
-        );
-      }
-    };
-
-    checkApi().then(() => loadCurrentUser());
+    loadCurrentUser();
 
     return () => {
       delete document.body.dataset.page;
@@ -512,9 +506,7 @@ export default function AccountPage() {
 
   const handleGoogle = () => {
     if (!apiReady) {
-      setStatus(
-        "Auth server is offline. Start the API server or update NEXT_PUBLIC_API_URL."
-      );
+      setStatus(AUTH_OFFLINE_STATUS);
       return;
     }
     const apiContext = getApiContext();

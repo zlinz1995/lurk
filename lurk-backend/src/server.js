@@ -8,9 +8,9 @@ import { loadEnv } from "./config/env.js";
 loadEnv();
 
 console.log("GOOGLE ENV CHECK", {
-  id: process.env.GOOGLE_CLIENT_ID,
-  secret: process.env.GOOGLE_CLIENT_SECRET,
-  redirect: process.env.GOOGLE_REDIRECT_URI,
+  id: process.env.GOOGLE_CLIENT_ID ? "[set]" : "[missing]",
+  secret: process.env.GOOGLE_CLIENT_SECRET ? "[set]" : "[missing]",
+  redirect: process.env.GOOGLE_REDIRECT_URI || "[missing]",
 });
 
 const [{ attachApiLayer }, { default: quantumRoutes }] = await Promise.all([
@@ -125,10 +125,18 @@ function createShutdown({ server, api, timeoutMs }) {
       if (api?.sockets?.close) {
         await api.sockets.close();
       }
-      if (api?.db?.close) {
+      await new Promise((resolve, reject) =>
+        server.close((err) => {
+          if (!err || err.code === "ERR_SERVER_NOT_RUNNING") {
+            resolve();
+            return;
+          }
+          reject(err);
+        })
+      );
+      if (api?.db?.close && api?.db?.open) {
         api.db.close();
       }
-      await new Promise((resolve) => server.close(resolve));
     } catch (err) {
       console.error("Shutdown error", err);
     } finally {

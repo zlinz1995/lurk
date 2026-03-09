@@ -271,7 +271,8 @@ const REPORT_DESTINATION_EMAIL = (
   .trim()
   .toLowerCase();
 const REPORT_EMAIL_FROM = "Lurk <support@lurk-app.com>";
-const resend = new Resend(process.env.RESEND_API_KEY);
+const RESEND_API_KEY = (process.env.RESEND_API_KEY ?? "").trim();
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 const REPORT_REQUEST_TTL_MS = Number(
   process.env.REPORT_REQUEST_TTL_MS ?? 10 * 60 * 1000
 );
@@ -307,6 +308,37 @@ const authLimiter = createLimiter({ windowMs: 60 * 1000, limit: 20 });
 const authRelaxedLimiter = createLimiter({ windowMs: 60 * 1000, limit: 120 });
 
 /* -------------------- API -------------------- */
+
+function isDatabaseClosedError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("database connection is not open");
+}
+
+function respondDatabaseUnavailable(req, res) {
+  if (res.headersSent) return;
+  const accepted = req.accepts?.(["json", "html"]) || "json";
+  if (accepted === "html") {
+    res.status(503).send("Service temporarily unavailable.");
+    return;
+  }
+  res.status(503).json({ error: "database_unavailable" });
+}
+
+function withRouteErrorBoundary(handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch((error) => {
+      if (isDatabaseClosedError(error)) {
+        console.error("Database unavailable during request", {
+          path: req?.originalUrl || req?.url || "",
+          method: req?.method || "",
+        });
+        respondDatabaseUnavailable(req, res);
+        return;
+      }
+      next(error);
+    });
+  };
+}
 
 export async function attachApiLayer({ app, server, dev = false } = {}) {
   if (!app || !server) {
@@ -647,13 +679,43 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       process.env.REPORT_DESTINATION_EMAIL ||
       REPORT_DESTINATION_EMAIL ||
       "support@lurk-app.com";
+    let deliveryMode = "email";
+    let deliveryIssue = "";
     try {
-      await resend.emails.send({
-        from: "Lurk <support@lurk-app.com>",
+      const reportText = [
+        `Category: ${category}`,
+        `Impact: ${impact}`,
+        `Link: ${link}`,
+        `Reporter: ${reporter}`,
+        `Submitted At: ${submittedAt}`,
+        `Source IP: ${sourceIp || "unknown"}`,
+        `User-Agent: ${userAgent || "unknown"}`,
+        "",
+        details,
+      ].join("\n");
+      const emailResult = await sendEmail({
         to: process.env.REPORT_DESTINATION_EMAIL || destination,
         subject: "New Lurk Report",
-        html: `<p>${escapeHtml(details)}</p>`,
+        text: reportText,
       });
+      if (!emailResult?.ok) {
+        const reason = String(emailResult?.reason || "send_failed");
+        if (reason === "resend_not_configured") {
+          deliveryMode = "local_log";
+          deliveryIssue = reason;
+          console.warn("report email disabled; RESEND_API_KEY is not configured", {
+            submittedAt,
+            category,
+            impact,
+            link,
+            contact,
+            reporter,
+          });
+          console.info("report payload (local fallback)", reportText);
+        } else {
+          throw new Error(reason);
+        }
+      }
     } catch (err) {
       console.warn("report email send failed", err);
       const payload = {
@@ -675,7 +737,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const payload = {
       ok: true,
       accepted: false,
-      detail: "sent",
+      detail: deliveryMode === "email" ? "sent" : "stored_without_email",
+      warning: deliveryIssue || undefined,
       submittedAt,
       destination,
     };
@@ -2665,7 +2728,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.get("/auth/google", authRelaxedLimiter, (req, res) => {
+  app.get("/auth/google", authRelaxedLimiter, withRouteErrorBoundary((req, res) => {
     if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
       res.status(501).json({ error: "google_oauth_not_configured" });
       return;
@@ -2696,9 +2759,12 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
 
     res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
-  });
+  }));
 
-  app.get(["/auth/google/callback", "/auth/google/fallback"], authRelaxedLimiter, async (req, res) => {
+  app.get(
+    ["/auth/google/callback", "/auth/google/fallback"],
+    authRelaxedLimiter,
+    withRouteErrorBoundary(async (req, res) => {
     if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
       res.status(501).send("Google OAuth is not configured.");
       return;
@@ -2910,7 +2976,8 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       finalRedirect = appendAuthToken(finalRedirect, session.token, requestOrigin);
     }
     res.redirect(finalRedirect);
-  });
+    })
+  );
 
   app.get("/threads", readLimiter, (_req, res) => {
     purgeExpiredThreads(db);
@@ -4271,7 +4338,7 @@ function getDefaultRedirectUrl(requestOrigin, fallbackPath = "/account") {
 }
 
 async function sendEmail({ to, subject, text, html }) {
-  if (!process.env.RESEND_API_KEY) {
+  if (!resend) {
     return { ok: false, reason: "resend_not_configured" };
   }
   const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
