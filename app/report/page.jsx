@@ -31,6 +31,9 @@ const dedupeEndpoints = (items = []) => {
 
 const getReportEndpoints = () => {
   const configured = apiPath("/reports");
+  if (configured && configured !== "/reports") {
+    return dedupeEndpoints([configured, "/reports"]);
+  }
   if (typeof window === "undefined") {
     return dedupeEndpoints([configured, "/reports"]);
   }
@@ -54,9 +57,14 @@ const postReport = async ({ endpoint, payload, requestId }) => {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-    const data = await response.json().catch(() => ({}));
+    const contentType = response.headers.get("content-type") || "";
+    const isJson = /application\/json/i.test(contentType);
+    const data = isJson ? await response.json().catch(() => ({})) : {};
     if (!response.ok) {
       throw new Error(data?.error || "Report submission failed");
+    }
+    if (!isJson || data?.ok !== true) {
+      throw new Error("invalid_report_response");
     }
     return data;
   } finally {

@@ -15,3 +15,13 @@ services:
         value: critical centrist
       - key: DEVELOPER_EMAILS
         value: 8yuy8u@gmail.com
+      - key: AUTH_ALLOWED_REDIRECT_ORIGINS
+        value: https://lurk-app.com,https://api.lurk-app.com
+      - key: GOOGLE_REDIRECT_URI
+        value: https://api.lurk-app.com/auth/google/callback
+      - key: REPORT_DESTINATION_EMAIL
+        value: support@lurk-app.com
+      - key: REPORT_EMAIL_FROM
+        value: Lurk <onboarding@resend.dev>
+      - key: RESEND_API_KEY
+        sync: false

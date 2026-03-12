@@ -270,7 +270,9 @@ const REPORT_DESTINATION_EMAIL = (
 )
   .trim()
   .toLowerCase();
-const REPORT_EMAIL_FROM = "Lurk <support@lurk-app.com>";
+const REPORT_EMAIL_FROM = (
+  process.env.REPORT_EMAIL_FROM ?? "Lurk <onboarding@resend.dev>"
+).trim();
 const RESEND_API_KEY = (process.env.RESEND_API_KEY ?? "").trim();
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 const REPORT_REQUEST_TTL_MS = Number(
