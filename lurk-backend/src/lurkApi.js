@@ -628,7 +628,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
-  app.post("/reports", reportLimiter, async (req, res) => {
+  const submitReport = async (req, res) => {
     pruneReportRequestCache();
     const category = sanitizeReportField(req?.body?.category, 80).toLowerCase();
     const impact = sanitizeReportField(req?.body?.impact, 80);
@@ -702,7 +702,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       });
       if (!emailResult?.ok) {
         const reason = String(emailResult?.reason || "send_failed");
-        if (reason === "resend_not_configured") {
+        if (reason === "resend_not_configured" && dev) {
           deliveryMode = "local_log";
           deliveryIssue = reason;
           console.warn("report email disabled; RESEND_API_KEY is not configured", {
@@ -754,7 +754,9 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       });
     }
     res.status(statusCode).json(payload);
-  });
+  };
+  app.post("/reports", reportLimiter, submitReport);
+  app.post("/api/report", reportLimiter, submitReport);
 
   app.get("/auth/me", authRelaxedLimiter, (req, res) => {
     const session = requireSession(req, res);

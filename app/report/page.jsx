@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { resolveApiBase } from "../src/resolveApiBase.js";
 
-const API_BASE = resolveApiBase(process.env.NEXT_PUBLIC_API_URL);
 const SUPPORT_EMAIL = "support@lurk-app.com";
 const REPORT_SUBMIT_TIMEOUT_MS = 20_000;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -11,11 +9,47 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const isLocalHost = (hostname = "") =>
   LOCAL_HOSTS.has(hostname) || hostname.endsWith(".local");
 
-const apiPath = (path = "") => {
-  const base = API_BASE;
-  if (!path) return base;
+const resolveClientApiBase = () => {
+  if (typeof document === "undefined") return "";
+  const docEl = document.documentElement;
+  return (
+    docEl?.dataset?.apiBase ||
+    docEl?.dataset?.nativeApiBase ||
+    document.body?.dataset?.apiBase ||
+    document.body?.dataset?.nativeApiBase ||
+    ""
+  );
+};
+
+const getApiContext = () => {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return { base: "", sameOrigin: true };
+  }
+  const base = resolveClientApiBase();
+  if (!base) return { base: "", sameOrigin: true };
+  try {
+    const origin = new URL(base).origin;
+    return { base, sameOrigin: origin === window.location.origin };
+  } catch {
+    return { base: "", sameOrigin: true };
+  }
+};
+
+const buildApiUrl = (base, path = "") => {
+  if (!path) return base || "";
+  if (/^https?:\/\//i.test(path)) return path;
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return base ? `${base}${normalized}` : normalized;
+};
+
+const isSameOriginEndpoint = (endpoint = "") => {
+  if (!endpoint || endpoint.startsWith("/")) return true;
+  if (typeof window === "undefined") return true;
+  try {
+    return new URL(endpoint, window.location.origin).origin === window.location.origin;
+  } catch {
+    return true;
+  }
 };
 
 const dedupeEndpoints = (items = []) => {
@@ -30,19 +64,25 @@ const dedupeEndpoints = (items = []) => {
 };
 
 const getReportEndpoints = () => {
-  const configured = apiPath("/reports");
-  if (configured && configured !== "/reports") {
-    return dedupeEndpoints([configured, "/reports"]);
-  }
-  if (typeof window === "undefined") {
-    return dedupeEndpoints([configured, "/reports"]);
-  }
+  const { base } = getApiContext();
+  const configuredReports = buildApiUrl(base, "/reports");
+  const configuredApiReport = buildApiUrl(base, "/api/report");
+  const candidates = [configuredReports, configuredApiReport];
+
+  if (typeof window === "undefined") return dedupeEndpoints(candidates);
+
   const onLocalhost = isLocalHost(window.location.hostname || "");
   if (onLocalhost) {
-    return dedupeEndpoints([configured, "/reports"]);
+    return dedupeEndpoints([configuredReports, configuredApiReport, "/reports", "/api/report"]);
   }
-  return dedupeEndpoints(["/reports", configured]);
+  return dedupeEndpoints([configuredReports, configuredApiReport, "/reports", "/api/report"]);
 };
+
+const sanitizeStatusCode = (value = "") =>
+  String(value)
+    .trim()
+    .replace(/[^\w:.-]/g, "_")
+    .slice(0, 200);
 
 const postReport = async ({ endpoint, payload, requestId }) => {
   const controller = new AbortController();
@@ -56,12 +96,15 @@ const postReport = async ({ endpoint, payload, requestId }) => {
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
+      credentials: isSameOriginEndpoint(endpoint) ? "include" : "omit",
     });
     const contentType = response.headers.get("content-type") || "";
     const isJson = /application\/json/i.test(contentType);
     const data = isJson ? await response.json().catch(() => ({})) : {};
     if (!response.ok) {
-      throw new Error(data?.error || "Report submission failed");
+      const code = sanitizeStatusCode(data?.error || "report_submission_failed");
+      const detail = sanitizeStatusCode(data?.detail || "");
+      throw new Error(detail ? `${code}:${detail}` : code);
     }
     if (!isJson || data?.ok !== true) {
       throw new Error("invalid_report_response");
@@ -115,9 +158,6 @@ export default function ReportPage() {
           if (isLastEndpoint) {
             break;
           }
-          if (error?.name === "AbortError" && endpoint === "/reports") {
-            break;
-          }
         }
       }
 
@@ -139,7 +179,9 @@ export default function ReportPage() {
         message:
           error?.name === "AbortError"
             ? `Report submission timed out. Email ${SUPPORT_EMAIL} directly.`
-            : `Could not submit report right now. Email ${SUPPORT_EMAIL} directly.`,
+            : String(error?.message || "").startsWith("report_delivery_failed:")
+              ? `Report was received, but email delivery failed. Email ${SUPPORT_EMAIL} directly.`
+              : `Could not submit report right now. Email ${SUPPORT_EMAIL} directly.`,
       });
     }
   }, []);
