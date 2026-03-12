@@ -266,12 +266,12 @@ const CHAT_HISTORY_KEY_PREFIX =
   process.env.CHAT_HISTORY_KEY_PREFIX ?? "lurk:chat:";
 
 const REPORT_DESTINATION_EMAIL = (
-  process.env.REPORT_DESTINATION_EMAIL ?? "support@lurk-app.com"
+  process.env.REPORT_DESTINATION_EMAIL ?? "zacharylizn1013@gmail.com"
 )
   .trim()
   .toLowerCase();
 const REPORT_EMAIL_FROM = (
-  process.env.REPORT_EMAIL_FROM ?? "Lurk <onboarding@resend.dev>"
+  process.env.REPORT_EMAIL_FROM ?? "Lurk <zacharylizn1013@gmail.com>"
 ).trim();
 const RESEND_API_KEY = (process.env.RESEND_API_KEY ?? "").trim();
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
@@ -658,7 +658,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
             accepted: true,
             detail: "processing",
             submittedAt: existing.submittedAt || new Date().toISOString(),
-            destination: REPORT_DESTINATION_EMAIL || "support@lurk-app.com",
+            destination: REPORT_DESTINATION_EMAIL || "zacharylizn1013@gmail.com",
           });
           return;
         }
@@ -680,7 +680,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     const destination =
       process.env.REPORT_DESTINATION_EMAIL ||
       REPORT_DESTINATION_EMAIL ||
-      "support@lurk-app.com";
+      "zacharylizn1013@gmail.com";
     let deliveryMode = "email";
     let deliveryIssue = "";
     try {

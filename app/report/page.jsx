@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 
-const SUPPORT_EMAIL = "support@lurk-app.com";
+const SUPPORT_EMAIL = "zacharylizn1013@gmail.com";
 const REPORT_SUBMIT_TIMEOUT_MS = 20_000;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 

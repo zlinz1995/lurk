@@ -20,8 +20,8 @@ services:
       - key: GOOGLE_REDIRECT_URI
         value: https://api.lurk-app.com/auth/google/callback
       - key: REPORT_DESTINATION_EMAIL
-        value: support@lurk-app.com
+        value: zacharylizn1013@gmail.com
       - key: REPORT_EMAIL_FROM
-        value: Lurk <onboarding@resend.dev>
+        value: Lurk <zacharylizn1013@gmail.com>
       - key: RESEND_API_KEY
         sync: false
