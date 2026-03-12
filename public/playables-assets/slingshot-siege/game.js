@@ -24,13 +24,15 @@
   const config = {
     width: 960,
     height: 540,
-    gravity: 1100,
+    gravity: 980,
     groundY: 500,
-    maxShots: 6,
+    maxShots: Number.POSITIVE_INFINITY,
     anchorX: 160,
     anchorY: 420,
     projectileRadius: 14,
-    maxPull: 112,
+    maxPull: 170,
+    launchSpeed: 8.2,
+    maxLaunchVelocity: 2200,
   };
 
   const state = {
@@ -84,6 +86,7 @@
   };
 
   const countAliveTargets = () => targets.filter((item) => item.alive).length;
+  const hasShotLimit = () => Number.isFinite(config.maxShots);
 
   const setOverlay = (title, text, showButton = true) => {
     overlayTitle.textContent = title;
@@ -102,7 +105,9 @@
 
   const updateHud = () => {
     scoreDisplay.textContent = `Score: ${state.score}`;
-    shotsDisplay.textContent = `Shots: ${state.shotsUsed} / ${config.maxShots}`;
+    shotsDisplay.textContent = hasShotLimit()
+      ? `Shots: ${state.shotsUsed} / ${config.maxShots}`
+      : `Shots: ${state.shotsUsed}`;
     sdk.score({
       score: state.score,
       shotsUsed: state.shotsUsed,
@@ -209,7 +214,7 @@
 
   const startGame = () => {
     if (!state.running) {
-      if (countAliveTargets() === 0 || state.shotsUsed >= config.maxShots) {
+      if (countAliveTargets() === 0 || (hasShotLimit() && state.shotsUsed >= config.maxShots)) {
         resetGame();
       }
       state.running = true;
@@ -332,7 +337,7 @@
     if (state.pendingRespawn && now >= state.respawnAt) {
       state.pendingRespawn = false;
       if (countAliveTargets() === 0) return;
-      if (state.shotsUsed >= config.maxShots) {
+      if (hasShotLimit() && state.shotsUsed >= config.maxShots) {
         endGame("lose");
       } else {
         resetProjectile();
@@ -455,15 +460,15 @@
       resetProjectile();
       return;
     }
-    if (state.shotsUsed >= config.maxShots) {
+    if (hasShotLimit() && state.shotsUsed >= config.maxShots) {
       setStatus("No shots left.");
       resetProjectile();
       return;
     }
 
     projectile.launched = true;
-    projectile.vx = clamp(dx * 4.2, -1300, 1300);
-    projectile.vy = clamp(dy * 4.2, -1300, 1300);
+    projectile.vx = clamp(dx * config.launchSpeed, -config.maxLaunchVelocity, config.maxLaunchVelocity);
+    projectile.vy = clamp(dy * config.launchSpeed, -config.maxLaunchVelocity, config.maxLaunchVelocity);
     state.shotsUsed += 1;
     updateHud();
     setStatus("Launch!");
