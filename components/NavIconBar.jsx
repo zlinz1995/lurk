@@ -141,6 +141,19 @@ export default function NavIconBar() {
           ),
         },
         {
+          href: "/discussions",
+          label: "Discussions",
+          title: "Threaded Discussions",
+          activePrefix: "/discussions",
+          icon: (
+            <>
+              <path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H11l-4 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z"></path>
+              <path d="M8 10h8"></path>
+              <path d="M8 13h5"></path>
+            </>
+          ),
+        },
+        {
           href: "/report",
           label: "Report",
           title: "Report",
