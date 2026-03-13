@@ -3760,6 +3760,35 @@ a {
   line-height: 1.5;
 }
 
+.profile-details-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.profile-details-item {
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  background: rgba(8, 14, 24, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.profile-details-item dt {
+  margin: 0 0 6px;
+  color: var(--c-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.profile-details-item dd {
+  margin: 0;
+  color: var(--c-text);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .profile-meta {
   display: flex;
   gap: var(--s-4);

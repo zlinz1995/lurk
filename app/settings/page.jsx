@@ -43,6 +43,7 @@ const EMPTY_PROFILE_DETAILS = {
   age: "",
   gender: "",
   interests: "",
+  bio: "",
 };
 
 const normalizeProfileDetails = (user) => ({
@@ -53,6 +54,7 @@ const normalizeProfileDetails = (user) => ({
       : String(user.profileDetails.age),
   gender: user?.profileDetails?.gender || "",
   interests: user?.profileDetails?.interests || "",
+  bio: user?.bio || "",
 });
 
 const getApiContext = () => {
@@ -227,6 +229,7 @@ export default function SettingsPage() {
           profileAge: profileDetails.age,
           profileGender: profileDetails.gender,
           profileInterests: profileDetails.interests,
+          bio: profileDetails.bio,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -342,6 +345,21 @@ export default function SettingsPage() {
                     setProfileDetails((prev) => ({
                       ...prev,
                       interests: event.target.value,
+                    }))
+                  }
+                  maxLength={320}
+                  disabled={profileInputsDisabled}
+                />
+              </label>
+              <label className="settings-field">
+                Bio (optional)
+                <textarea
+                  rows={4}
+                  value={profileDetails.bio}
+                  onChange={(event) =>
+                    setProfileDetails((prev) => ({
+                      ...prev,
+                      bio: event.target.value,
                     }))
                   }
                   maxLength={320}

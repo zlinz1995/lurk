@@ -122,6 +122,43 @@ const ADMIN_DEV_DEFAULT_NAME = "critical centrist";
 const ADMIN_SETTINGS_CACHE_TTL_MS = Number(
   process.env.ADMIN_SETTINGS_CACHE_TTL_MS ?? 2_000
 );
+const DISCUSSION_TEST_USERS = [
+  {
+    email: "circuitmuse@lurk.test",
+    displayName: "@circuitmuse",
+    bio: "Seeded discussion test account for Tech moderation flows.",
+    profileName: "Circuit Muse",
+    profileInterests: "Desk setups, AI tools",
+  },
+  {
+    email: "stackedcombo@lurk.test",
+    displayName: "@stackedcombo",
+    bio: "Seeded discussion test account for Gaming moderation flows.",
+    profileName: "Stacked Combo",
+    profileInterests: "Co-op games, matchmaking",
+  },
+  {
+    email: "briefingroom@lurk.test",
+    displayName: "@briefingroom",
+    bio: "Seeded discussion test account for News moderation flows.",
+    profileName: "Briefing Room",
+    profileInterests: "Headlines, media literacy",
+  },
+  {
+    email: "frameskip@lurk.test",
+    displayName: "@frameskip",
+    bio: "Seeded discussion test account for Entertainment moderation flows.",
+    profileName: "Frameskip",
+    profileInterests: "Shows, pacing, criticism",
+  },
+  {
+    email: "quietsignal@lurk.test",
+    displayName: "@quietsignal",
+    bio: "Seeded discussion test account for Advice moderation flows.",
+    profileName: "Quiet Signal",
+    profileInterests: "Habits, wellness, routines",
+  },
+];
 
 const DEFAULT_ADMIN_SETTINGS = {
   user_suspend: true,
@@ -357,6 +394,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   prepareSchema(db);
   runAdminBootstrap(db);
   runDeveloperBootstrap(db);
+  runDiscussionTestUserBootstrap(db);
   const runHousekeeping = () => {
     purgeExpiredThreads(db);
     purgeExpiredAuthSessions(db);
@@ -4878,6 +4916,49 @@ function runAdminBootstrap(db) {
     `INSERT OR REPLACE INTO admin_bootstrap (id, ran_at, detail)
      VALUES (1, ?, ?)`
   ).run(new Date().toISOString(), JSON.stringify(detail));
+}
+
+function runDiscussionTestUserBootstrap(db) {
+  if (!db || !Array.isArray(DISCUSSION_TEST_USERS) || DISCUSSION_TEST_USERS.length === 0) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const existing = db
+    .prepare(
+      `SELECT email
+       FROM users
+       WHERE email IN (${DISCUSSION_TEST_USERS.map(() => "?").join(",")})`
+    )
+    .all(...DISCUSSION_TEST_USERS.map((entry) => entry.email));
+  const existingEmails = new Set(existing.map((row) => normalizeEmail(row?.email || "")));
+  const insert = db.prepare(
+    `INSERT INTO users (
+       email,
+       display_name,
+       password_hash,
+       email_verified,
+       email_verified_at,
+       bio,
+       profile_name,
+       profile_interests
+     )
+     VALUES (?, ?, ?, 1, ?, ?, ?, ?)`
+  );
+
+  DISCUSSION_TEST_USERS.forEach((entry) => {
+    const email = normalizeEmail(entry.email);
+    if (!email || existingEmails.has(email)) return;
+    insert.run(
+      email,
+      entry.displayName,
+      hashPassword(`discussion-seed-${email}`),
+      now,
+      entry.bio || null,
+      entry.profileName || null,
+      entry.profileInterests || null
+    );
+  });
 }
 
 function runDeveloperBootstrap(db) {

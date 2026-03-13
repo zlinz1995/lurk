@@ -112,7 +112,7 @@ export default function AccountPage() {
 
   const [profileId, setProfileId] = useState("");
   const [profile, setProfile] = useState(null);
-  const [profileForm, setProfileForm] = useState({ displayName: "", bio: "" });
+  const [profileForm, setProfileForm] = useState({ displayName: "" });
   const [profilePending, setProfilePending] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -227,7 +227,7 @@ export default function AccountPage() {
     if (!user) {
       setProfileId("");
       setProfile(null);
-      setProfileForm({ displayName: "", bio: "" });
+      setProfileForm({ displayName: "" });
       setLoadingProfile(false);
       return;
     }
@@ -256,7 +256,6 @@ export default function AccountPage() {
           setProfile(data?.user || null);
           setProfileForm({
             displayName: data?.user?.displayName || "",
-            bio: data?.user?.bio || "",
           });
         }
       } catch {
@@ -346,7 +345,6 @@ export default function AccountPage() {
     try {
       const payload = {
         displayName: profileForm.displayName,
-        bio: profileForm.bio,
         avatarUrl: profile?.avatarUrl || user?.avatarUrl || "",
       };
       const res = await apiFetch("/auth/profile", {
@@ -523,6 +521,12 @@ export default function AccountPage() {
     avatarPreview || profile?.avatarUrl || user?.avatarUrl || ""
   );
   const isAdmin = Boolean(profile?.isAdmin || user?.isAdmin);
+  const publicDetails = [
+    { label: "Name", value: profile?.profileDetails?.name },
+    { label: "Age", value: profile?.profileDetails?.age },
+    { label: "Gender", value: profile?.profileDetails?.gender },
+    { label: "Interests", value: profile?.profileDetails?.interests },
+  ].filter((item) => item.value !== null && item.value !== undefined && item.value !== "");
 
   if (!user) {
     return (
@@ -805,14 +809,23 @@ export default function AccountPage() {
                     </span>
                   ) : null}
                 </h1>
-                <p className="profile-bio">{profile.bio || "No bio yet."}</p>
                 <div className="profile-meta">
                   {profile.createdAt ? (
                     <span>Joined {formatDate(profile.createdAt)}</span>
                   ) : null}
                   <span className="profile-member-chip">Founding member</span>
-                  {profile.isSelf ? <span>Private view</span> : null}
                 </div>
+                {profile.bio ? <p className="profile-bio">{profile.bio}</p> : null}
+                {publicDetails.length > 0 ? (
+                  <dl className="profile-details-list">
+                    {publicDetails.map((item) => (
+                      <div key={item.label} className="profile-details-item">
+                        <dt>{item.label}</dt>
+                        <dd>{item.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : null}
                 {profileStatus ? (
                   <div className="profile-status">{profileStatus}</div>
                 ) : null}
@@ -829,19 +842,6 @@ export default function AccountPage() {
                           setProfileForm((prev) => ({
                             ...prev,
                             displayName: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="auth-field">
-                      Bio
-                      <textarea
-                        rows={3}
-                        value={profileForm.bio}
-                        onChange={(event) =>
-                          setProfileForm((prev) => ({
-                            ...prev,
-                            bio: event.target.value,
                           }))
                         }
                       />
