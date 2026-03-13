@@ -56,6 +56,16 @@ const REACT_MEMORY_TTL = Number(process.env.REACT_TTL_MS ?? 24 * 60 * 60 * 1000)
 const CHAT_HISTORY_LIMIT = Number(process.env.CHAT_HISTORY_LIMIT ?? 200);
 const CHAT_STICKERS = new Set(["cheer", "wave", "wow", "heart"]);
 const RESET_DB_ON_BOOT = parseBoolean(process.env.RESET_DB_ON_BOOT, false);
+const DISCUSSION_THREAD_ID_PREFIX = "THR";
+const DISCUSSION_POST_ID_PREFIX = "CMT";
+const DISCUSSION_PUBLIC_ID_WIDTH = 6;
+const DISCUSSION_CATEGORIES = new Set([
+  "tech",
+  "gaming",
+  "news",
+  "entertainment",
+  "advice",
+]);
 
 const SOCKET_MAX_HTTP_BUFFER = Number(process.env.SOCKET_MAX_HTTP_BUFFER ?? 1_000_000);
 const SOCKET_PING_INTERVAL_MS = Number(
@@ -228,7 +238,6 @@ const DEFAULT_ADMIN_SETTINGS = {
   emergency_region_shutdowns: false,
   admin_view_actions: true,
   admin_per_admin_audit_logs: true,
-  admin_mandatory_reason_codes: false,
 };
 const ADMIN_SETTING_KEYS = new Set(Object.keys(DEFAULT_ADMIN_SETTINGS));
 let adminSettingsCache = { value: null, loadedAt: 0 };
@@ -328,6 +337,7 @@ const createLimiter = ({
   limit = 60,
   message = { error: "too_many_requests" },
   keyGenerator,
+  skip,
 } = {}) =>
   rateLimit({
     windowMs,
@@ -336,6 +346,7 @@ const createLimiter = ({
     legacyHeaders: false,
     message,
     keyGenerator,
+    skip,
   });
 
 const readLimiter = createLimiter({ limit: 240 });
@@ -510,13 +521,23 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     return { admin, settings };
   };
 
-  const requireAdminReason = (settings, res, reason) => {
-    if (settings?.admin_mandatory_reason_codes && !reason) {
-      res.status(400).json({ error: "reason_required" });
-      return false;
-    }
-    return true;
+  const requireAdminReason = () => true;
+
+  const isAdminRateLimitExempt = (req) => {
+    const session = getSessionFromRequest(req, db);
+    if (!session?.user?.id) return false;
+    const userRow = db
+      .prepare(`SELECT id, email, display_name, is_admin FROM users WHERE id = ?`)
+      .get(session.user.id);
+    if (!userRow) return false;
+    return ensureAdminFlag(db, userRow, dev);
   };
+
+  const adminLimiter = createLimiter({
+    windowMs: 60 * 1000,
+    limit: 20,
+    skip: isAdminRateLimitExempt,
+  });
 
   const parseTargetUserId = (req, res) => {
     const userId = Number.parseInt(req?.params?.id, 10);
@@ -565,19 +586,13 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     return { userId, userRow };
   };
 
-  const parseThreadId = (req, res) => {
-    const threadId = Number.parseInt(req?.params?.id, 10);
-    if (!Number.isFinite(threadId)) {
-      res.status(400).json({ error: "invalid_thread_id" });
-      return null;
-    }
-    return threadId;
-  };
-
   const loadThreadForAdmin = (threadId) =>
     db
       .prepare(
         `SELECT id,
+                public_id,
+                user_id,
+                category,
                 title,
                 body,
                 image_filename,
@@ -596,31 +611,59 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       )
       .get(threadId);
 
+  const loadThreadForAdminByPublicId = (publicId) =>
+    db
+      .prepare(
+        `SELECT id,
+                public_id,
+                user_id,
+                category,
+                title,
+                body,
+                image_filename,
+                sensitive,
+                created_at,
+                is_deleted,
+                deleted_at,
+                deleted_by,
+                deleted_reason,
+                is_frozen,
+                frozen_at,
+                frozen_by,
+                frozen_reason
+         FROM threads
+         WHERE UPPER(public_id) = ?`
+      )
+      .get(publicId);
+
   const requireThread = (req, res) => {
-    const threadId = parseThreadId(req, res);
-    if (!threadId) return null;
-    const row = loadThreadForAdmin(threadId);
+    const rawId = String(req?.params?.id || "").trim();
+    if (!rawId) {
+      res.status(400).json({ error: "invalid_thread_id" });
+      return null;
+    }
+    const numericThreadId = /^\d+$/.test(rawId) ? Number.parseInt(rawId, 10) : null;
+    const publicId = normalizeDiscussionPublicId(
+      rawId,
+      DISCUSSION_THREAD_ID_PREFIX
+    );
+    const row =
+      (numericThreadId ? loadThreadForAdmin(numericThreadId) : null) ||
+      (publicId ? loadThreadForAdminByPublicId(publicId) : null);
     if (!row) {
       res.status(404).json({ error: "thread_not_found" });
       return null;
     }
-    return { threadId, row };
-  };
-
-  const parsePostId = (req, res) => {
-    const postId = Number.parseInt(req?.params?.id, 10);
-    if (!Number.isFinite(postId)) {
-      res.status(400).json({ error: "invalid_post_id" });
-      return null;
-    }
-    return postId;
+    return { threadId: row.id, row };
   };
 
   const loadPostForAdmin = (postId) =>
     db
       .prepare(
         `SELECT id,
+                public_id,
                 thread_id,
+                user_id,
                 body,
                 image_filename,
                 sensitive,
@@ -634,15 +677,45 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       )
       .get(postId);
 
+  const loadPostForAdminByPublicId = (publicId) =>
+    db
+      .prepare(
+        `SELECT id,
+                public_id,
+                thread_id,
+                user_id,
+                body,
+                image_filename,
+                sensitive,
+                created_at,
+                is_deleted,
+                deleted_at,
+                deleted_by,
+                deleted_reason
+         FROM posts
+         WHERE UPPER(public_id) = ?`
+      )
+      .get(publicId);
+
   const requirePost = (req, res) => {
-    const postId = parsePostId(req, res);
-    if (!postId) return null;
-    const row = loadPostForAdmin(postId);
+    const rawId = String(req?.params?.id || "").trim();
+    if (!rawId) {
+      res.status(400).json({ error: "invalid_post_id" });
+      return null;
+    }
+    const numericPostId = /^\d+$/.test(rawId) ? Number.parseInt(rawId, 10) : null;
+    const publicId = normalizeDiscussionPublicId(
+      rawId,
+      DISCUSSION_POST_ID_PREFIX
+    );
+    const row =
+      (numericPostId ? loadPostForAdmin(numericPostId) : null) ||
+      (publicId ? loadPostForAdminByPublicId(publicId) : null);
     if (!row) {
       res.status(404).json({ error: "post_not_found" });
       return null;
     }
-    return { postId, row };
+    return { postId: row.id, row };
   };
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -1681,7 +1754,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ deleted: true, submissionId });
   });
 
-  app.get("/admin/playables/submissions", authLimiter, (req, res) => {
+  app.get("/admin/playables/submissions", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const status = String(req?.query?.status || "").trim().toLowerCase();
@@ -1712,7 +1785,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
-  app.get("/admin/playables/summary", authLimiter, (req, res) => {
+  app.get("/admin/playables/summary", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const rows = db
@@ -1747,7 +1820,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
-  app.post("/admin/playables/submissions/:id/approve", authLimiter, (req, res) => {
+  app.post("/admin/playables/submissions/:id/approve", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const submissionId = Number.parseInt(req?.params?.id, 10);
@@ -1846,7 +1919,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
-  app.post("/admin/playables/submissions/:id/reject", authLimiter, (req, res) => {
+  app.post("/admin/playables/submissions/:id/reject", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const submissionId = Number.parseInt(req?.params?.id, 10);
@@ -1904,7 +1977,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
-  app.delete("/admin/playables/submissions/:id", authLimiter, (req, res) => {
+  app.delete("/admin/playables/submissions/:id", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const submissionId = Number.parseInt(req?.params?.id, 10);
@@ -1938,14 +2011,14 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ deleted: true, submissionId });
   });
 
-  app.get("/admin/settings", authLimiter, (req, res) => {
+  app.get("/admin/settings", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const state = getAdminSettingsState(db);
     res.json(state);
   });
 
-  app.patch("/admin/settings", authLimiter, (req, res) => {
+  app.patch("/admin/settings", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const patch = req?.body?.settings || {};
@@ -1956,14 +2029,6 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       res.status(400).json({ error: "invalid_settings" });
       return;
     }
-    if (
-      current.settings?.admin_mandatory_reason_codes &&
-      keys.some((key) => key !== "admin_mandatory_reason_codes") &&
-      !reason
-    ) {
-      res.status(400).json({ error: "reason_required" });
-      return;
-    }
     const next = updateAdminSettingsState(db, patch, {
       userId: admin.userRow.id,
       reason,
@@ -1972,15 +2037,10 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ...next, actions });
   });
 
-  app.post("/admin/settings/reset", authLimiter, (req, res) => {
+  app.post("/admin/settings/reset", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const reason = sanitizeReason(req?.body?.reason || "");
-    const current = getAdminSettingsState(db);
-    if (current.settings?.admin_mandatory_reason_codes && !reason) {
-      res.status(400).json({ error: "reason_required" });
-      return;
-    }
     const next = resetAdminSettingsState(db, {
       userId: admin.userRow.id,
       reason,
@@ -1989,7 +2049,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ...next, actions });
   });
 
-  app.get("/admin/actions", authLimiter, (req, res) => {
+  app.get("/admin/actions", adminLimiter, (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const settings = getAdminSettingsState(db).settings;
@@ -2001,7 +2061,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ actions: getAdminActions(db, limit) });
   });
 
-  app.get("/admin/users", authLimiter, (req, res) => {
+  app.get("/admin/users", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_view_private_metadata");
     if (!ctx) return;
     const limit = clampInt(req?.query?.limit, 1, 500) ?? 200;
@@ -2032,7 +2092,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
-  app.get("/admin/users/:id", authLimiter, (req, res) => {
+  app.get("/admin/users/:id", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_view_private_metadata");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2071,7 +2131,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     });
   });
 
-  app.get("/admin/users/:id/actions", authLimiter, (req, res) => {
+  app.get("/admin/users/:id/actions", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_view_moderation_history");
     if (!ctx) return;
     if (!ctx.settings.admin_view_actions) {
@@ -2084,7 +2144,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ actions: getAdminActionsForUser(db, target.userId, limit) });
   });
 
-  app.get("/admin/users/:id/risk-flags", authLimiter, (req, res) => {
+  app.get("/admin/users/:id/risk-flags", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_risk_flags");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2109,7 +2169,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ flags: rows });
   });
 
-  app.post("/admin/users/:id/risk-flags", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/risk-flags", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_risk_flags");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2140,7 +2200,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, id: result.lastInsertRowid });
   });
 
-  app.post("/admin/users/:id/risk-flags/:flagId/resolve", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/risk-flags/:flagId/resolve", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_risk_flags");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2183,7 +2243,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/users/:id/trust-override", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/trust-override", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_risk_flags");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2209,7 +2269,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, level: override || "" });
   });
 
-  app.post("/admin/users/:id/suspend", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/suspend", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_suspend");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2246,7 +2306,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, suspendedUntil: untilIso || null });
   });
 
-  app.post("/admin/users/:id/unsuspend", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/unsuspend", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_suspend");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2269,7 +2329,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/users/:id/ban", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/ban", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_permanent_bans");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2301,7 +2361,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, sessionsCleared });
   });
 
-  app.post("/admin/users/:id/unban", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/unban", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_permanent_bans");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2324,7 +2384,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/users/:id/shadow-restrict", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/shadow-restrict", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_shadow_restrict");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2343,7 +2403,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/users/:id/shadow-unrestrict", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/shadow-unrestrict", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_shadow_restrict");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2362,7 +2422,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/users/:id/force-logout", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/force-logout", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_force_logout");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2382,7 +2442,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, sessionsCleared: result.changes ?? 0 });
   });
 
-  app.post("/admin/users/:id/reset-profile", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/reset-profile", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_reset_profile");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2415,7 +2475,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, displayName });
   });
 
-  app.post("/admin/users/:id/delete", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/delete", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_delete_accounts");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2445,7 +2505,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true, deletedUserId: target.userId });
   });
 
-  app.post("/admin/users/:id/verify", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/verify", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_verify_accounts");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2468,7 +2528,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/users/:id/unverify", authLimiter, (req, res) => {
+  app.post("/admin/users/:id/unverify", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "user_verify_accounts");
     if (!ctx) return;
     const target = requireTargetUser(req, res);
@@ -2490,7 +2550,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/threads/:id/delete", authLimiter, (req, res) => {
+  app.post("/admin/threads/:id/delete", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "content_remove");
     if (!ctx) return;
     const target = requireThread(req, res);
@@ -2515,7 +2575,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/threads/:id/restore", authLimiter, (req, res) => {
+  app.post("/admin/threads/:id/restore", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "content_restore");
     if (!ctx) return;
     const target = requireThread(req, res);
@@ -2539,7 +2599,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/threads/:id/freeze", authLimiter, (req, res) => {
+  app.post("/admin/threads/:id/freeze", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "content_freeze_threads");
     if (!ctx) return;
     const target = requireThread(req, res);
@@ -2564,7 +2624,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/threads/:id/unfreeze", authLimiter, (req, res) => {
+  app.post("/admin/threads/:id/unfreeze", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "content_freeze_threads");
     if (!ctx) return;
     const target = requireThread(req, res);
@@ -2588,7 +2648,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/posts/:id/delete", authLimiter, (req, res) => {
+  app.post("/admin/posts/:id/delete", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "content_remove");
     if (!ctx) return;
     const target = requirePost(req, res);
@@ -2613,7 +2673,7 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     res.json({ ok: true });
   });
 
-  app.post("/admin/posts/:id/restore", authLimiter, (req, res) => {
+  app.post("/admin/posts/:id/restore", adminLimiter, (req, res) => {
     const ctx = requireAdminPermission(req, res, "content_restore");
     if (!ctx) return;
     const target = requirePost(req, res);
@@ -3021,26 +3081,210 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
     })
   );
 
-  app.get("/threads", readLimiter, (_req, res) => {
+  app.get("/threads", readLimiter, (req, res) => {
     purgeExpiredThreads(db);
+    const session = getSessionFromRequest(req, db);
+    let viewerIsAdmin = false;
+    if (session?.user?.id) {
+      const viewerRow = db
+        .prepare(`SELECT id, email, display_name, is_admin FROM users WHERE id = ?`)
+        .get(session.user.id);
+      if (viewerRow) {
+        viewerIsAdmin = ensureAdminFlag(db, viewerRow, dev);
+      }
+    }
     const rows = db
       .prepare(
         `
-        SELECT *
-        FROM threads
+        SELECT t.*,
+               u.display_name as author_display_name
+        FROM threads t
+        LEFT JOIN users u ON u.id = t.user_id
         WHERE COALESCE(is_deleted, 0) = 0
-        ORDER BY datetime(created_at) DESC
+        ORDER BY datetime(t.created_at) DESC
         LIMIT 100
       `
       )
       .all();
-    res.json(rows.map((row) => serializeThread(row, db)));
+    res.json(
+      rows.map((row) =>
+        serializeThread(row, db, {
+          viewerUserId: session?.user?.id || null,
+          viewerIsAdmin,
+        })
+      )
+    );
+  });
+
+  app.post("/threads", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const settings = getAdminSettingsState(db).settings;
+    if (isThreadPostingBlocked(settings)) {
+      res.status(403).json({ error: "posting_blocked" });
+      return;
+    }
+    const title = sanitizeDiscussionTitle(req?.body?.title || "");
+    const body = sanitizeDiscussionBody(
+      req?.body?.body || req?.body?.message || ""
+    );
+    const category = sanitizeDiscussionCategory(req?.body?.category || "");
+    if (!title) {
+      res.status(400).json({ error: "title_required" });
+      return;
+    }
+    if (!body) {
+      res.status(400).json({ error: "body_required" });
+      return;
+    }
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `INSERT INTO threads (category, title, body, created_at, user_id)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(category, title, body, now, session.user.id);
+    const threadId = Number(result.lastInsertRowid);
+    const publicId = buildDiscussionPublicId(
+      DISCUSSION_THREAD_ID_PREFIX,
+      threadId
+    );
+    db.prepare(`UPDATE threads SET public_id = ? WHERE id = ?`).run(publicId, threadId);
+    const row = db
+      .prepare(
+        `SELECT t.*,
+                u.display_name as author_display_name
+         FROM threads t
+         LEFT JOIN users u ON u.id = t.user_id
+         WHERE t.id = ?`
+      )
+      .get(threadId);
+    res.status(201).json({
+      thread: serializeThread(row, db, {
+        viewerUserId: session.user.id,
+        viewerIsAdmin: false,
+      }),
+    });
+  });
+
+  app.post("/threads/:id/posts", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const settings = getAdminSettingsState(db).settings;
+    if (isCommentPostingBlocked(settings)) {
+      res.status(403).json({ error: "posting_blocked" });
+      return;
+    }
+    const target = requireThread(req, res);
+    if (!target) return;
+    if (target.row.is_deleted) {
+      res.status(410).json({ error: "thread_deleted" });
+      return;
+    }
+    if (target.row.is_frozen) {
+      res.status(403).json({ error: "thread_frozen" });
+      return;
+    }
+    const body = sanitizeDiscussionBody(
+      req?.body?.body || req?.body?.message || ""
+    );
+    if (!body) {
+      res.status(400).json({ error: "body_required" });
+      return;
+    }
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `INSERT INTO posts (thread_id, body, created_at, user_id)
+         VALUES (?, ?, ?, ?)`
+      )
+      .run(target.threadId, body, now, session.user.id);
+    const postId = Number(result.lastInsertRowid);
+    const publicId = buildDiscussionPublicId(DISCUSSION_POST_ID_PREFIX, postId);
+    db.prepare(`UPDATE posts SET public_id = ? WHERE id = ?`).run(publicId, postId);
+    const row = db
+      .prepare(
+        `SELECT p.*,
+                u.display_name as author_display_name
+         FROM posts p
+         LEFT JOIN users u ON u.id = p.user_id
+         WHERE p.id = ?`
+      )
+      .get(postId);
+    res.status(201).json({
+      post: serializeDiscussionPost(row, {
+        viewerUserId: session.user.id,
+        viewerIsAdmin: false,
+      }),
+    });
+  });
+
+  app.delete("/threads/:id", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const userRow = db
+      .prepare(`SELECT id, email, display_name, is_admin FROM users WHERE id = ?`)
+      .get(session.user.id);
+    if (!userRow) {
+      res.status(401).json({ error: "unauthenticated" });
+      return;
+    }
+    const isAdmin = ensureAdminFlag(db, userRow, dev);
+    const target = requireThread(req, res);
+    if (!target) return;
+    const ownsThread =
+      Number.isFinite(target.row.user_id) && target.row.user_id === session.user.id;
+    if (!isAdmin && !ownsThread) {
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE threads
+       SET is_deleted = 1,
+           deleted_at = ?,
+           deleted_by = ?,
+           deleted_reason = COALESCE(deleted_reason, ?)
+       WHERE id = ?`
+    ).run(now, session.user.id, isAdmin && !ownsThread ? "admin_delete" : "owner_delete", target.threadId);
+    res.json({ ok: true, deleted: true, threadId: target.row.public_id || target.threadId });
+  });
+
+  app.delete("/posts/:id", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const userRow = db
+      .prepare(`SELECT id, email, display_name, is_admin FROM users WHERE id = ?`)
+      .get(session.user.id);
+    if (!userRow) {
+      res.status(401).json({ error: "unauthenticated" });
+      return;
+    }
+    const isAdmin = ensureAdminFlag(db, userRow, dev);
+    const target = requirePost(req, res);
+    if (!target) return;
+    const ownsPost =
+      Number.isFinite(target.row.user_id) && target.row.user_id === session.user.id;
+    if (!isAdmin && !ownsPost) {
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE posts
+       SET is_deleted = 1,
+           deleted_at = ?,
+           deleted_by = ?,
+           deleted_reason = COALESCE(deleted_reason, ?)
+       WHERE id = ?`
+    ).run(now, session.user.id, isAdmin && !ownsPost ? "admin_delete" : "owner_delete", target.postId);
+    res.json({ ok: true, deleted: true, postId: target.row.public_id || target.postId });
   });
 
   /* ---- remaining routes unchanged except for safety ---- */
   /* (intentionally omitted here for brevity — logic identical) */
 
-  sockets = await setupSockets(server);
+  sockets = await setupSockets(server, db);
   app.locals.sockets = sockets;
   app.locals.db = db;
   return { db, sockets };
@@ -3121,6 +3365,65 @@ function sanitizeMessage(value) {
   return String(value).trim().slice(0, 500);
 }
 
+function stripAsciiControlChars(
+  value,
+  { replacement = "", preserveNewlines = false } = {}
+) {
+  let normalized = "";
+  for (const char of String(value || "")) {
+    const code = char.charCodeAt(0);
+    const isControl = (code >= 0 && code <= 31) || code === 127;
+    const isAllowedNewline = preserveNewlines && (code === 10 || code === 13);
+    if (isControl && !isAllowedNewline) {
+      normalized += replacement;
+      continue;
+    }
+    normalized += char;
+  }
+  return normalized;
+}
+
+function sanitizeDiscussionTitle(value) {
+  return stripAsciiControlChars(value, { replacement: " " })
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
+function sanitizeDiscussionBody(value) {
+  return stripAsciiControlChars(value, {
+    replacement: " ",
+    preserveNewlines: true,
+  })
+    .trim()
+    .slice(0, 4_000);
+}
+
+function sanitizeDiscussionCategory(value) {
+  const cleaned = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  return DISCUSSION_CATEGORIES.has(cleaned) ? cleaned : "tech";
+}
+
+function normalizeDiscussionPublicId(value, prefix) {
+  const cleaned = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, "")
+    .slice(0, 32);
+  if (!cleaned) return "";
+  if (!prefix) return cleaned;
+  return cleaned.startsWith(`${prefix}-`) ? cleaned : "";
+}
+
+function buildDiscussionPublicId(prefix, id) {
+  const numericId = Number.parseInt(id, 10);
+  if (!Number.isFinite(numericId) || numericId < 1) return "";
+  return `${prefix}-${String(numericId).padStart(DISCUSSION_PUBLIC_ID_WIDTH, "0")}`;
+}
+
 function sanitizeSticker(value) {
   if (!value) return "";
   const cleaned = String(value).toLowerCase().replace(/[^a-z0-9-_]/g, "");
@@ -3135,8 +3438,7 @@ function sanitizeBio(value) {
 
 function sanitizeReportField(value, maxLength = 400) {
   if (value === undefined || value === null) return "";
-  return String(value)
-    .replace(/[\u0000-\u001F\u007F]/g, " ")
+  return stripAsciiControlChars(value, { replacement: " " })
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLength);
@@ -3168,8 +3470,7 @@ function sanitizeAvatarUrl(value) {
 
 function sanitizeOptionalProfileText(value, maxLength = 120) {
   if (value === undefined || value === null) return "";
-  return String(value)
-    .replace(/[\u0000-\u001F\u007F]/g, "")
+  return stripAsciiControlChars(value)
     .trim()
     .slice(0, maxLength);
 }
@@ -4113,11 +4414,22 @@ function isUploadsDisabled(settings) {
   );
 }
 
-function isPostingBlocked(settings) {
+function isThreadPostingBlocked(settings) {
+  if (!settings) return false;
+  return Boolean(
+    settings.emergency_posting_freeze ||
+      settings.emergency_feature_killswitch ||
+      settings.system_feature_toggle === false ||
+      settings.system_incident_response
+  );
+}
+
+function isCommentPostingBlocked(settings) {
   if (!settings) return false;
   return Boolean(
     settings.emergency_posting_freeze ||
       settings.emergency_comment_lockdown ||
+      settings.content_disable_comments ||
       settings.emergency_feature_killswitch ||
       settings.system_feature_toggle === false ||
       settings.system_incident_response
@@ -4314,8 +4626,19 @@ function getRequestOrigin(req) {
   return `${proto}://${host}`;
 }
 
+function isSafeLocalRedirectOrigin(origin) {
+  if (!origin) return false;
+  try {
+    const url = new URL(origin);
+    if (!["http:", "https:"].includes(url.protocol)) return false;
+    return ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function sanitizeRedirect(target, requestOrigin) {
-  if (!target) return "/";
+  if (!target) return "";
   if (target.startsWith("/")) return target;
   try {
     const url = new URL(target);
@@ -4323,10 +4646,13 @@ function sanitizeRedirect(target, requestOrigin) {
     if (AUTH_ALLOWED_REDIRECT_ORIGINS.includes(url.origin)) {
       return url.toString();
     }
+    if (isSafeLocalRedirectOrigin(url.origin)) {
+      return url.toString();
+    }
   } catch {
-    return "/";
+    return "";
   }
-  return "/";
+  return "";
 }
 
 function shouldAppendAuthToken(target, requestOrigin) {
@@ -4426,7 +4752,7 @@ function escapeHtml(value = "") {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
+    .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
 
@@ -4570,6 +4896,9 @@ function ensureThreadColumns(db) {
     if (existing.has(name)) return;
     db.prepare(`ALTER TABLE threads ADD COLUMN ${name} ${definition}`).run();
   };
+  addColumn("category", "TEXT DEFAULT 'tech'");
+  addColumn("public_id", "TEXT");
+  addColumn("user_id", "INTEGER");
   addColumn("is_deleted", "INTEGER DEFAULT 0");
   addColumn("deleted_at", "DATETIME");
   addColumn("deleted_by", "INTEGER");
@@ -4578,6 +4907,34 @@ function ensureThreadColumns(db) {
   addColumn("frozen_at", "DATETIME");
   addColumn("frozen_by", "INTEGER");
   addColumn("frozen_reason", "TEXT");
+  db.prepare(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_threads_public_id ON threads(public_id);"
+  ).run();
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_threads_user_created ON threads(user_id, created_at DESC);"
+  ).run();
+  const rows = db
+    .prepare(`SELECT id FROM threads WHERE public_id IS NULL OR TRIM(public_id) = ''`)
+    .all();
+  try {
+    db.prepare(
+      `UPDATE threads
+       SET category = 'tech'
+       WHERE category IS NULL OR TRIM(category) = ''`
+    ).run();
+  } catch {
+    // Ignore backfill failures.
+  }
+  const updatePublicId = db.prepare(`UPDATE threads SET public_id = ? WHERE id = ?`);
+  const assignPublicIds = db.transaction((items) => {
+    items.forEach((item) => {
+      updatePublicId.run(
+        buildDiscussionPublicId(DISCUSSION_THREAD_ID_PREFIX, item.id),
+        item.id
+      );
+    });
+  });
+  assignPublicIds(rows);
 }
 
 function ensurePostColumns(db) {
@@ -4591,10 +4948,31 @@ function ensurePostColumns(db) {
     if (existing.has(name)) return;
     db.prepare(`ALTER TABLE posts ADD COLUMN ${name} ${definition}`).run();
   };
+  addColumn("public_id", "TEXT");
+  addColumn("user_id", "INTEGER");
   addColumn("is_deleted", "INTEGER DEFAULT 0");
   addColumn("deleted_at", "DATETIME");
   addColumn("deleted_by", "INTEGER");
   addColumn("deleted_reason", "TEXT");
+  db.prepare(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_public_id ON posts(public_id);"
+  ).run();
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_posts_user_created ON posts(user_id, created_at DESC);"
+  ).run();
+  const rows = db
+    .prepare(`SELECT id FROM posts WHERE public_id IS NULL OR TRIM(public_id) = ''`)
+    .all();
+  const updatePublicId = db.prepare(`UPDATE posts SET public_id = ? WHERE id = ?`);
+  const assignPublicIds = db.transaction((items) => {
+    items.forEach((item) => {
+      updatePublicId.run(
+        buildDiscussionPublicId(DISCUSSION_POST_ID_PREFIX, item.id),
+        item.id
+      );
+    });
+  });
+  assignPublicIds(rows);
 }
 
 function ensurePlayableSubmissionColumns(db) {
@@ -4666,22 +5044,29 @@ function prepareSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS threads (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category TEXT DEFAULT 'tech',
+      public_id TEXT UNIQUE,
+      user_id INTEGER,
       title TEXT,
       body TEXT,
       image_filename TEXT,
       sensitive INTEGER DEFAULT 0,
-      created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_threads_created_at ON threads(created_at DESC);
 
     CREATE TABLE IF NOT EXISTS posts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      public_id TEXT UNIQUE,
       thread_id INTEGER NOT NULL,
+      user_id INTEGER,
       body TEXT,
       image_filename TEXT,
       sensitive INTEGER DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-      FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE
+      FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_posts_thread_id_created ON posts(thread_id, created_at ASC);
 
@@ -4995,31 +5380,67 @@ function purgeExpiredThreads(db) {
   ).run(cutoff);
 }
 
-function serializeThread(row, db) {
+function serializeDiscussionPost(
+  row,
+  { viewerUserId = null, viewerIsAdmin = false } = {}
+) {
   if (!row) return null;
-  const replies = db
-    .prepare(
-      `SELECT *
-       FROM posts
-       WHERE thread_id = ?
-         AND COALESCE(is_deleted, 0) = 0
-       ORDER BY datetime(created_at) ASC`
-    )
-    .all(row.id);
+  const publicId =
+    row.public_id || buildDiscussionPublicId(DISCUSSION_POST_ID_PREFIX, row.id);
+  const canDelete =
+    Boolean(viewerIsAdmin) ||
+    (Number.isFinite(row.user_id) && row.user_id === viewerUserId);
   return {
     ...row,
-    text: row.body || row.title || "",
+    id: publicId,
+    internalId: row.id,
+    text: row.body || "",
     image: row.image_filename ? `/uploads/${row.image_filename}` : null,
-    isFrozen: Boolean(row.is_frozen),
-    replies: replies.map((reply) => ({
-      ...reply,
-      text: reply.body || "",
-      image: reply.image_filename ? `/uploads/${reply.image_filename}` : null,
-    })),
+    author: {
+      id: Number.isFinite(row.user_id) ? row.user_id : null,
+      displayName: row.author_display_name || "Unknown user",
+    },
+    canDelete,
   };
 }
 
-async function setupSockets(server) {
+function serializeThread(row, db, { viewerUserId = null, viewerIsAdmin = false } = {}) {
+  if (!row) return null;
+  const replies = db
+    .prepare(
+      `SELECT p.*,
+              u.display_name as author_display_name
+       FROM posts p
+       LEFT JOIN users u ON u.id = p.user_id
+       WHERE p.thread_id = ?
+         AND COALESCE(p.is_deleted, 0) = 0
+       ORDER BY datetime(p.created_at) ASC`
+    )
+    .all(row.id);
+  const publicId =
+    row.public_id || buildDiscussionPublicId(DISCUSSION_THREAD_ID_PREFIX, row.id);
+  const canDelete =
+    Boolean(viewerIsAdmin) ||
+    (Number.isFinite(row.user_id) && row.user_id === viewerUserId);
+  return {
+    ...row,
+    id: publicId,
+    internalId: row.id,
+    text: row.body || row.title || "",
+    image: row.image_filename ? `/uploads/${row.image_filename}` : null,
+    isFrozen: Boolean(row.is_frozen),
+    author: {
+      id: Number.isFinite(row.user_id) ? row.user_id : null,
+      displayName: row.author_display_name || "Unknown user",
+    },
+    canDelete,
+    replies: replies.map((reply) =>
+      serializeDiscussionPost(reply, { viewerUserId, viewerIsAdmin })
+    ),
+  };
+}
+
+async function setupSockets(server, db) {
   if (!server) return null;
   if (server.__lurkSockets) return server.__lurkSockets;
 
@@ -5232,7 +5653,7 @@ async function setupSockets(server) {
 
     socket.on("chat message", (payload = {}) => {
       const adminSettings = getAdminSettingsState(db).settings;
-      if (isPostingBlocked(adminSettings)) {
+      if (isCommentPostingBlocked(adminSettings)) {
         socket.emit("chat blocked", { reason: "posting_frozen" });
         return;
       }

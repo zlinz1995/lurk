@@ -4154,13 +4154,6 @@ a {
   flex-wrap: wrap;
 }
 
-.admin-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-3);
-  align-items: flex-end;
-}
-
 .admin-title {
   margin: 0;
   font-size: 2rem;
@@ -4207,6 +4200,11 @@ a {
   min-width: 0;
 }
 
+.admin-card-compact {
+  gap: var(--s-2);
+  padding: var(--s-3);
+}
+
 .admin-card h2 {
   margin: 0;
   font-size: 1.1rem;
@@ -4231,6 +4229,7 @@ a {
   gap: var(--s-2);
   font-size: 0.9rem;
   color: var(--c-text);
+  cursor: pointer;
 }
 
 .admin-toggle input {
@@ -4238,6 +4237,7 @@ a {
   width: 16px;
   height: 16px;
   accent-color: currentColor;
+  cursor: pointer;
 }
 
 .admin-field {
@@ -4248,6 +4248,11 @@ a {
   color: var(--c-muted);
   min-width: 220px;
   width: 100%;
+}
+
+.admin-field-compact {
+  min-width: 0;
+  font-size: 0.82rem;
 }
 
 .admin-field input,
@@ -4292,6 +4297,13 @@ a {
 .admin-status-banner {
   font-size: 0.85rem;
   color: var(--c-muted);
+}
+
+.admin-notes-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .admin-log {

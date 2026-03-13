@@ -2,37 +2,28 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildClientApiContext,
+  isLocalHost,
+  resolveClientApiBases,
+  shouldAutoFallbackApiBase,
+} from "../src/resolveApiBase.js";
 
 const AUTH_TOKEN_KEY = "lurkAuthToken";
 const AUTH_OFFLINE_STATUS =
   "Auth server is offline. Start the API server or update NEXT_PUBLIC_API_URL.";
 
-const resolveClientApiBase = () => {
-  if (typeof document === "undefined") return "";
-  const docEl = document.documentElement;
-  return (
-    docEl?.dataset?.apiBase ||
-    docEl?.dataset?.nativeApiBase ||
-    document.body?.dataset?.apiBase ||
-    document.body?.dataset?.nativeApiBase ||
-    ""
-  );
+const getApiContext = () => {
+  const [base = ""] = resolveClientApiBases();
+  return buildClientApiContext(base);
 };
 
-const getApiContext = () => {
-  if (typeof document === "undefined" || typeof window === "undefined") {
-    return { base: "", sameOrigin: true };
+const getApiContexts = () => {
+  const bases = resolveClientApiBases();
+  if (!bases.length) {
+    return [{ base: "", sameOrigin: true }];
   }
-  const base = resolveClientApiBase();
-  if (!base) {
-    return { base: "", sameOrigin: true };
-  }
-  try {
-    const origin = new URL(base).origin;
-    return { base, sameOrigin: origin === window.location.origin };
-  } catch {
-    return { base: "", sameOrigin: true };
-  }
+  return bases.map((base) => buildClientApiContext(base));
 };
 
 const buildApiUrl = (base, path) => {
@@ -132,23 +123,39 @@ export default function AccountPage() {
 
   const apiFetch = useCallback(
     async (path, options = {}) => {
-      const apiContext = getApiContext();
-      const headers = new Headers(options.headers || {});
-      const token = readAuthToken();
-      if (token) {
-        headers.set("Authorization", `Bearer ${token}`);
-      }
-      if (options.body && !headers.has("Content-Type")) {
-        if (!(options.body instanceof FormData)) {
-          headers.set("Content-Type", "application/json");
+      const contexts = getApiContexts();
+      let lastError = null;
+      for (let index = 0; index < contexts.length; index += 1) {
+        const apiContext = contexts[index];
+        const headers = new Headers(options.headers || {});
+        const token = readAuthToken();
+        if (token) {
+          headers.set("Authorization", `Bearer ${token}`);
+        }
+        if (options.body && !headers.has("Content-Type")) {
+          if (!(options.body instanceof FormData)) {
+            headers.set("Content-Type", "application/json");
+          }
+        }
+        const url = buildApiUrl(apiContext.base, path);
+        try {
+          return await fetch(url, {
+            ...options,
+            headers,
+            credentials: apiContext.sameOrigin ? "include" : "omit",
+          });
+        } catch (error) {
+          lastError = error;
+          const canFallback =
+            index === 0 &&
+            contexts.length > 1 &&
+            shouldAutoFallbackApiBase(apiContext.base);
+          if (!canFallback) {
+            throw error;
+          }
         }
       }
-      const url = buildApiUrl(apiContext.base, path);
-      return fetch(url, {
-        ...options,
-        headers,
-        credentials: apiContext.sameOrigin ? "include" : "omit",
-      });
+      throw lastError || new Error("api_unavailable");
     },
     []
   );
@@ -502,18 +509,55 @@ export default function AccountPage() {
     }
   };
 
-  const handleGoogle = () => {
+  const handleGoogle = async () => {
     if (!apiReady) {
       setStatus(AUTH_OFFLINE_STATUS);
       return;
     }
-    const apiContext = getApiContext();
-    const redirect = `${window.location.origin}/account`;
-    const url = buildApiUrl(
-      apiContext.base,
-      `/auth/google?redirect=${encodeURIComponent(redirect)}`
-    );
-    window.location.href = url;
+    setPending(true);
+    setStatus("");
+    try {
+      const redirect = `${window.location.origin}/account`;
+      const contexts = getApiContexts();
+      let targetBase = contexts[0]?.base || "";
+      const requireLocalApiForOauth =
+        typeof window !== "undefined" && isLocalHost(window.location.hostname || "");
+      for (let index = 0; index < contexts.length; index += 1) {
+        const apiContext = contexts[index];
+        const readyUrl = buildApiUrl(apiContext.base, "/ready");
+        try {
+          const res = await fetch(readyUrl, {
+            method: "GET",
+            credentials: apiContext.sameOrigin ? "include" : "omit",
+          });
+          if (res.ok) {
+            targetBase = apiContext.base;
+            break;
+          }
+        } catch {
+          const canFallback =
+            index === 0 &&
+            contexts.length > 1 &&
+            shouldAutoFallbackApiBase(apiContext.base);
+          if (canFallback && requireLocalApiForOauth) {
+            setStatus(
+              "Local auth server is offline. Start `npm run api` before using Google sign in."
+            );
+            setPending(false);
+            return;
+          }
+          if (!canFallback) break;
+        }
+      }
+      const url = buildApiUrl(
+        targetBase,
+        `/auth/google?redirect=${encodeURIComponent(redirect)}`
+      );
+      window.location.href = url;
+    } catch {
+      setStatus("Unable to reach the auth service. Check your API configuration.");
+      setPending(false);
+    }
   };
 
   const displayAvatar = resolveMediaUrl(

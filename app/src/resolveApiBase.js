@@ -1,6 +1,6 @@
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-const isLocalHost = (hostname = "") =>
+export const isLocalHost = (hostname = "") =>
   LOCAL_HOSTS.has(hostname) || hostname.endsWith(".local");
 
 const getHostname = (url = "") => {
@@ -15,6 +15,43 @@ const getHostname = (url = "") => {
     }
   }
 };
+
+export function resolveClientApiBases(doc = typeof document !== "undefined" ? document : null) {
+  if (!doc) return [];
+  const docEl = doc.documentElement;
+  const body = doc.body;
+  const candidates = [
+    docEl?.dataset?.apiBase,
+    docEl?.dataset?.nativeApiBase,
+    body?.dataset?.apiBase,
+    body?.dataset?.nativeApiBase,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(candidates));
+}
+
+export function buildClientApiContext(base = "") {
+  if (typeof window === "undefined" || !base) {
+    return { base: base || "", sameOrigin: true };
+  }
+  try {
+    const origin = new URL(base).origin;
+    return { base, sameOrigin: origin === window.location.origin };
+  } catch {
+    return { base: "", sameOrigin: true };
+  }
+}
+
+export function shouldAutoFallbackApiBase(base = "") {
+  if (typeof window === "undefined" || !base) return false;
+  try {
+    const url = new URL(base);
+    return isLocalHost(url.hostname) && url.origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Resolve the API base URL for both local dev and production.

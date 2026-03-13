@@ -16,7 +16,7 @@ services:
       - key: DEVELOPER_EMAILS
         value: 8yuy8u@gmail.com
       - key: AUTH_ALLOWED_REDIRECT_ORIGINS
-        value: https://lurk-app.com,https://api.lurk-app.com
+        value: https://lurk-app.com,https://api.lurk-app.com,http://localhost:8080,http://127.0.0.1:8080,http://localhost:3000,http://127.0.0.1:3000
       - key: GOOGLE_REDIRECT_URI
         value: https://api.lurk-app.com/auth/google/callback
       - key: REPORT_DESTINATION_EMAIL

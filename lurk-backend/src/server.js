@@ -102,6 +102,17 @@ process.on("unhandledRejection", (err) => {
   shutdown("unhandledRejection");
 });
 
+server.on("error", (err) => {
+  if (err?.code === "EADDRINUSE") {
+    console.error(
+      `Port ${PORT} is already in use. Stop the existing process or set PORT/API_PORT to a different value.`
+    );
+    process.exit(1);
+  }
+  console.error("server listen error", err);
+  process.exit(1);
+});
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Lurk API listening on port ${PORT}`);
 });

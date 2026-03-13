@@ -5,6 +5,7 @@
   "description": "Lurk — ephemeral image board with threads, replies, and anonymous live chat. Posts vanish every 24 hours.",
   "scripts": {
     "dev": "next dev -p 8080",
+    "dev:all": "concurrently -k -n api,web -c cyan,magenta \"npm:api\" \"npm:dev\"",
     "build": "next build",
     "start": "serve -l 8080 out",
     "lint": "next lint",
@@ -32,6 +33,7 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
     "eslint": "^8.57.1",
     "nodemon": "^3.1.0",

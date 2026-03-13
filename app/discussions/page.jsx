@@ -2,8 +2,14 @@
 
 import CustomSelect from "../../components/CustomSelect.jsx";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  buildClientApiContext,
+  resolveClientApiBases,
+  shouldAutoFallbackApiBase,
+} from "../src/resolveApiBase.js";
 
+const AUTH_TOKEN_KEY = "lurkAuthToken";
 const categories = [
   { id: "tech", label: "Tech" },
   { id: "gaming", label: "Gaming" },
@@ -11,85 +17,229 @@ const categories = [
   { id: "entertainment", label: "Entertainment" },
   { id: "advice", label: "Advice" },
 ];
-const starterThreads = [
-  ["THR-TCH-2084", "tech", "Smallest reliable desk setup for coding all day", "@circuitmuse", "Looking for a clean dual-use setup with one monitor, one dock, and no cable clutter. What actually holds up after six months?", 18, "2m ago"],
-  ["THR-GME-4412", "gaming", "Games that still feel social without a huge time sink", "@stackedcombo", "Need co-op options that work for friends with uneven schedules. Bonus points if onboarding is easy and voice chat is optional.", 26, "9m ago"],
-  ["THR-NWS-3215", "news", "How are you filtering signal from noise right now?", "@briefingroom", "Curious which sources people trust when the same story develops in fragments across the day. What is worth checking first?", 11, "14m ago"],
-  ["THR-ENT-9041", "entertainment", "Shows with sharp pacing and no filler seasons", "@frameskip", "I want a strong weekend watch list. Looking for series that stay tight, look polished, and do not fall apart in season two.", 33, "21m ago"],
-  ["THR-ADV-1186", "advice", "What helped you stop doomscrolling at night?", "@quietsignal", "Trying to replace the late-night scroll loop with something that actually lowers stress. Habits, apps, routines, anything realistic.", 15, "37m ago"],
-].map(([id, category, title, author, excerpt, replies, activity]) => ({
-  id,
-  category,
-  title,
-  author,
-  excerpt,
-  replies,
-  activity,
-}));
 const emptyThreadDraft = { category: categories[0].id, title: "", message: "" };
-const createThreadId = () =>
-  `THR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+const buildApiUrl = (base, path) => {
+  if (!path) return base || "";
+  if (/^https?:\/\//i.test(path)) return path;
+  if (!base) return path.startsWith("/") ? path : `/${path}`;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalized}`;
+};
+
+const readAuthToken = () => {
+  try {
+    return window.localStorage?.getItem(AUTH_TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+};
+
+const getApiContexts = () => {
+  const bases = resolveClientApiBases();
+  if (!bases.length) {
+    return [{ base: "", sameOrigin: true }];
+  }
+  return bases.map((base) => buildClientApiContext(base));
+};
+
+const formatRelativeTime = (value) => {
+  if (!value) return "";
+  const ts = new Date(value).getTime();
+  if (!Number.isFinite(ts)) return "";
+  const diffMs = Date.now() - ts;
+  const diffMin = Math.max(0, Math.floor(diffMs / 60000));
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+};
 
 export default function DiscussionsPage() {
   const router = useRouter();
-  const [threads, setThreads] = useState(starterThreads);
+  const [threads, setThreads] = useState([]);
   const [threadDraft, setThreadDraft] = useState(emptyThreadDraft);
   const [friends, setFriends] = useState(["@circuitmuse", "@quietsignal"]);
   const [blockedUsers, setBlockedUsers] = useState(["@frameskip"]);
   const [openMenuKey, setOpenMenuKey] = useState("");
   const [lastThreadId, setLastThreadId] = useState("");
-  const [, setActivityMessage] = useState("");
-  const [currentUserHandle] = useState(
-    () => `@lurk${Math.random().toString(36).slice(2, 8)}`
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [status, setStatus] = useState("");
+
+  const apiFetch = useCallback(async (path, options = {}) => {
+    const contexts = getApiContexts();
+    let lastError = null;
+    for (let index = 0; index < contexts.length; index += 1) {
+      const apiContext = contexts[index];
+      const headers = new Headers(options.headers || {});
+      const token = readAuthToken();
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      if (options.body && !headers.has("Content-Type")) {
+        if (!(options.body instanceof FormData)) {
+          headers.set("Content-Type", "application/json");
+        }
+      }
+      const url = buildApiUrl(apiContext.base, path);
+      try {
+        return await fetch(url, {
+          ...options,
+          headers,
+          credentials: apiContext.sameOrigin ? "include" : "omit",
+        });
+      } catch (error) {
+        lastError = error;
+        const canFallback =
+          index === 0 &&
+          contexts.length > 1 &&
+          shouldAutoFallbackApiBase(apiContext.base);
+        if (!canFallback) throw error;
+      }
+    }
+    throw lastError || new Error("api_unavailable");
+  }, []);
+
+  const currentUserHandle = currentUser?.displayName || "";
+
+  const normalizedThreads = useMemo(
+    () =>
+      threads.map((thread) => ({
+        ...thread,
+        category: categories.some((entry) => entry.id === thread.category)
+          ? thread.category
+          : "tech",
+        authorHandle: thread.author?.displayName || "Unknown user",
+        replyCount: Array.isArray(thread.replies) ? thread.replies.length : 0,
+        activity: formatRelativeTime(thread.created_at),
+        excerpt: thread.text || thread.body || "",
+      })),
+    [threads]
   );
+
+  const loadCurrentUser = useCallback(async () => {
+    try {
+      const res = await apiFetch("/auth/me");
+      if (!res.ok) {
+        setCurrentUser(null);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setCurrentUser(data?.user || null);
+    } catch {
+      setCurrentUser(null);
+    }
+  }, [apiFetch]);
+
+  const loadThreads = useCallback(async () => {
+    try {
+      const res = await apiFetch("/threads");
+      const data = await res.json().catch(() => []);
+      if (!res.ok) {
+        setStatus("Unable to load discussions.");
+        return;
+      }
+      setThreads(Array.isArray(data) ? data : []);
+    } catch {
+      setStatus("Unable to load discussions.");
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      await Promise.all([loadCurrentUser(), loadThreads()]);
+      if (cancelled) return;
+    };
+    load();
+    const intervalId = window.setInterval(() => {
+      loadThreads();
+    }, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [loadCurrentUser, loadThreads]);
 
   const handleDraftChange = ({ target: { name, value } }) =>
     setThreadDraft((current) => ({ ...current, [name]: value }));
 
-  const handleThreadCreate = (event) => {
+  const handleThreadCreate = async (event) => {
     event.preventDefault();
     const title = threadDraft.title.trim();
-    const excerpt = threadDraft.message.trim();
-    if (!title || !excerpt) {
-      setActivityMessage("Fill in a thread title and opening post before creating a thread.");
+    const message = threadDraft.message.trim();
+    if (!currentUser) {
+      setStatus("Sign in to create a thread.");
       return;
     }
-
-    const id = createThreadId();
-    const nextThread = {
-      id,
-      category: threadDraft.category,
-      title,
-      author: currentUserHandle,
-      excerpt,
-      replies: 0,
-      activity: "just now",
-    };
-
-    setThreads((current) => [nextThread, ...current]);
-    setLastThreadId(id);
-    setThreadDraft((current) => ({ ...current, title: "", message: "" }));
-    setActivityMessage(`Created ${id} for ${currentUserHandle}.`);
-
-    if (typeof document !== "undefined") {
-      requestAnimationFrame(() => {
-        document.getElementById(`${threadDraft.category}-section`)?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+    if (!title || !message) {
+      setStatus("Fill in a thread title and opening post before creating a thread.");
+      return;
+    }
+    setSubmitting(true);
+    setStatus("");
+    try {
+      const res = await apiFetch("/threads", {
+        method: "POST",
+        body: JSON.stringify({
+          category: threadDraft.category,
+          title,
+          body: message,
+        }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data?.error || "Unable to create thread.");
+        return;
+      }
+      const createdThread = data?.thread || null;
+      if (createdThread) {
+        setThreads((current) => [createdThread, ...current]);
+        setLastThreadId(createdThread.id || "");
+      } else {
+        await loadThreads();
+      }
+      setThreadDraft((current) => ({ ...current, title: "", message: "" }));
+      if (createdThread?.id) {
+        setStatus(`Created ${createdThread.id}.`);
+      }
+    } catch {
+      setStatus("Unable to create thread.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const handleThreadDelete = (id) => {
-    setThreads((current) => current.filter((thread) => thread.id !== id));
-    setOpenMenuKey("");
-    setActivityMessage(`Deleted thread ${id}.`);
-    if (lastThreadId === id) setLastThreadId("");
+  const handleThreadDelete = async (id) => {
+    if (!id) return;
+    setStatus("");
+    try {
+      const res = await apiFetch(`/threads/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data?.error || "Unable to delete thread.");
+        return;
+      }
+      setThreads((current) => current.filter((thread) => thread.id !== id));
+      setOpenMenuKey("");
+      setStatus(`Deleted thread ${id}.`);
+      if (lastThreadId === id) setLastThreadId("");
+    } catch {
+      setStatus("Unable to delete thread.");
+    }
   };
 
   const handleUserAction = (action, thread) => {
-    const author = thread.author;
+    const author = thread.authorHandle;
     const wasFriend = friends.includes(author);
     const wasBlocked = blockedUsers.includes(author);
 
@@ -105,15 +255,17 @@ export default function DiscussionsPage() {
     }
 
     if (action === "add") {
-      setFriends((current) => (wasFriend ? current.filter((entry) => entry !== author) : [...current, author]));
+      setFriends((current) =>
+        wasFriend ? current.filter((entry) => entry !== author) : [...current, author]
+      );
       setBlockedUsers((current) => current.filter((entry) => entry !== author));
-      setActivityMessage(wasFriend ? `Removed ${author} from friends.` : `Added ${author} to friends.`);
     }
 
     if (action === "block") {
-      setBlockedUsers((current) => (wasBlocked ? current.filter((entry) => entry !== author) : [...current, author]));
+      setBlockedUsers((current) =>
+        wasBlocked ? current.filter((entry) => entry !== author) : [...current, author]
+      );
       setFriends((current) => current.filter((entry) => entry !== author));
-      setActivityMessage(wasBlocked ? `Unblocked ${author}.` : `Blocked ${author}.`);
     }
 
     setOpenMenuKey("");
@@ -155,10 +307,32 @@ export default function DiscussionsPage() {
                   label: category.label,
                 }))}
               />
-              <label>Thread title<input name="title" value={threadDraft.title} onChange={handleDraftChange} placeholder="Name the discussion" /></label>
-              <label className="span2">Opening post<textarea name="message" rows={4} value={threadDraft.message} onChange={handleDraftChange} placeholder="Write the first message for the thread." /></label>
+              <label>
+                Thread title
+                <input
+                  name="title"
+                  value={threadDraft.title}
+                  onChange={handleDraftChange}
+                  placeholder="Name the discussion"
+                  disabled={submitting}
+                />
+              </label>
+              <label className="span2">
+                Opening post
+                <textarea
+                  name="message"
+                  rows={4}
+                  value={threadDraft.message}
+                  onChange={handleDraftChange}
+                  placeholder="Write the first message for the thread."
+                  disabled={submitting}
+                />
+              </label>
             </div>
-            <button type="submit" className="primaryButton">Create Thread</button>
+            <button type="submit" className="primaryButton" disabled={submitting}>
+              {submitting ? "Creating..." : "Create Thread"}
+            </button>
+            {status ? <div className="statusMessage">{status}</div> : null}
           </form>
         </section>
 
@@ -177,10 +351,7 @@ export default function DiscussionsPage() {
                   key={handle}
                   type="button"
                   className="chip chipButton"
-                  onClick={() => {
-                    setBlockedUsers((current) => current.filter((entry) => entry !== handle));
-                    setActivityMessage(`Unblocked ${handle}.`);
-                  }}
+                  onClick={() => setBlockedUsers((current) => current.filter((entry) => entry !== handle))}
                 >
                   {handle}
                 </button>
@@ -191,7 +362,7 @@ export default function DiscussionsPage() {
 
         <div className="sections">
           {categories.map((category) => {
-            const categoryThreads = threads.filter((thread) => thread.category === category.id);
+            const categoryThreads = normalizedThreads.filter((thread) => thread.category === category.id);
 
             return (
               <section key={category.id} id={`${category.id}-section`} className="threadSection">
@@ -199,33 +370,46 @@ export default function DiscussionsPage() {
                   <h2>{category.label}</h2>
                 </div>
 
-                {categoryThreads.length ? (
+                {loading ? (
+                  <div className="emptyState">
+                    <p>Loading discussions...</p>
+                  </div>
+                ) : categoryThreads.length ? (
                   categoryThreads.map((thread, index) => {
-                    const isFriend = friends.includes(thread.author);
-                    const isBlocked = blockedUsers.includes(thread.author);
-                    const menuKey = `${thread.id}-${thread.author}`;
+                    const isFriend = friends.includes(thread.authorHandle);
+                    const isBlocked = blockedUsers.includes(thread.authorHandle);
+                    const canDeleteThread = Boolean(thread.canDelete);
+                    const menuKey = `${thread.id}-${thread.authorHandle}`;
 
                     return (
                       <article key={thread.id} className={index > 0 ? "threadRow withBorder" : "threadRow"}>
                         <div className="threadTop">
                           <div className="meta">
                             <span className="threadId">{thread.id}</span>
-                            <span>{thread.replies} replies</span>
+                            <span>{thread.replyCount} replies</span>
                             <span>{thread.activity}</span>
                           </div>
-                          <button type="button" className="deleteButton" onClick={() => handleThreadDelete(thread.id)}>Delete</button>
+                          {canDeleteThread ? (
+                            <button
+                              type="button"
+                              className="deleteButton"
+                              onClick={() => handleThreadDelete(thread.id)}
+                            >
+                              Delete
+                            </button>
+                          ) : null}
                         </div>
 
                         <h3>{thread.title}</h3>
                         <p className="threadCopy">
                           {isBlocked
-                            ? "This thread is from a blocked user. Unblock them from the strip above or with the same - toggle."
+                            ? "This thread is from a blocked user. Unblock them from the strip above or with the same toggle."
                             : thread.excerpt}
                         </p>
 
                         <div className="threadBottom">
                           <div className="userRow">
-                            <span className="user">{thread.author}</span>
+                            <span className="user">{thread.authorHandle}</span>
                             {isFriend ? <span className="pill">Friend</span> : null}
                             {isBlocked ? <span className="pill danger">Blocked</span> : null}
                             <div className="menuShell">
@@ -233,7 +417,7 @@ export default function DiscussionsPage() {
                                 type="button"
                                 className="toggleButton"
                                 onClick={() => setOpenMenuKey((current) => (current === menuKey ? "" : menuKey))}
-                                aria-label={`Open actions for ${thread.author}`}
+                                aria-label={`Open actions for ${thread.authorHandle}`}
                               >
                                 -
                               </button>
@@ -270,7 +454,8 @@ export default function DiscussionsPage() {
         h2, h3 { margin: 0; font-weight: 600; }
         h2 { font-size: 1rem; letter-spacing: 0.02em; }
         h3 { font-size: 1.18rem; }
-        .subcopy, .threadCopy, .muted, .emptyState p { margin: 0; color: #a9bbd1; line-height: 1.62; font-size: 0.94rem; }
+        .threadCopy, .muted, .emptyState p, .statusMessage { margin: 0; color: #a9bbd1; line-height: 1.62; font-size: 0.94rem; }
+        .statusMessage { text-align: center; }
         .categoryNav, .connections, .connectionRow, .chipRow, .threadTop, .threadBottom, .userRow, .meta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .categoryNav, .connections { justify-content: center; }
         .chip, .threadId, .pill, .deleteButton, .toggleButton, .primaryButton, .chipButton { border-radius: 999px; }
@@ -282,13 +467,13 @@ export default function DiscussionsPage() {
         .composer { width: min(900px, 100%); justify-items: center; text-align: center; padding: 2px 0 2px; }
         .composerGrid { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
         .span2 { grid-column: 1 / -1; }
-        label { display: grid; gap: 7px; text-align: left; color: #e0ebfb; font-size: 0.9rem; }
+        label { display: grid; gap: 7px; text-align: left; color: #e0ebfb; font-size: 0.9rem; width: 100%; }
         input, textarea { width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.09); background: rgba(255, 255, 255, 0.035); color: #f4f8ff; font: inherit; }
         input::placeholder, textarea::placeholder { color: #7d92ad; }
         textarea { resize: vertical; }
         .primaryButton, .deleteButton, .toggleButton, .chipButton, .menu button { border: 0; cursor: pointer; }
         .primaryButton { padding: 12px 18px; background: linear-gradient(135deg, #7aaaff, #93efca); color: #07101a; font-weight: 700; }
-        .connections { justify-content: space-between; gap: 16px; padding: 4px 0 0; border-top: 1px solid rgba(255, 255, 255, 0.06); border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-block: 14px; }
+        .connections { justify-content: space-between; gap: 16px; border-top: 1px solid rgba(255, 255, 255, 0.06); border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-block: 14px; }
         .connectionRow { gap: 14px; }
         .sections { gap: 16px; }
         .threadSection { scroll-margin-top: 28px; padding-top: 2px; }

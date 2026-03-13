@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  buildClientApiContext,
+  resolveClientApiBases,
+  shouldAutoFallbackApiBase,
+} from "../../../src/resolveApiBase.js";
 
 const buildApiUrl = (base, path) => {
   if (!path) return base || "";
@@ -10,23 +15,15 @@ const buildApiUrl = (base, path) => {
   return `${base}${normalized}`;
 };
 
-const resolveClientApiBase = () => {
-  if (typeof document === "undefined") return "";
-  const docEl = document.documentElement;
-  return (
-    docEl?.dataset?.apiBase ||
-    docEl?.dataset?.nativeApiBase ||
-    document.body?.dataset?.apiBase ||
-    document.body?.dataset?.nativeApiBase ||
-    ""
-  );
-};
-
 export default function GoogleCallbackBridgePage() {
   const [status, setStatus] = useState("Finishing Google sign in...");
 
   useEffect(() => {
-    const apiBase = resolveClientApiBase();
+    const bases = resolveClientApiBases();
+    let apiBase = bases[0] || "";
+    if (shouldAutoFallbackApiBase(apiBase) && bases[1]) {
+      apiBase = bases[1];
+    }
     if (!apiBase) {
       setStatus("Missing API base. Open /account and try Google sign in again.");
       return;
@@ -39,7 +36,15 @@ export default function GoogleCallbackBridgePage() {
       setStatus("OAuth callback route is misconfigured.");
       return;
     }
-    window.location.replace(target);
+    const context = buildClientApiContext(apiBase);
+    fetch(buildApiUrl(apiBase, "/ready"), {
+      method: "GET",
+      credentials: context.sameOrigin ? "include" : "omit",
+    })
+      .catch(() => null)
+      .finally(() => {
+        window.location.replace(target);
+      });
   }, []);
 
   return (
@@ -51,4 +56,3 @@ export default function GoogleCallbackBridgePage() {
     </main>
   );
 }
-

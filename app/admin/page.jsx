@@ -72,7 +72,6 @@ const DEFAULT_SETTINGS = {
   emergency_region_shutdowns: false,
   admin_view_actions: true,
   admin_per_admin_audit_logs: true,
-  admin_mandatory_reason_codes: false,
 };
 
 const DIRECTORY_ACTIONS = [
@@ -232,7 +231,6 @@ const ADMIN_SECTIONS = [
     items: [
       { key: "admin_view_actions", label: "View all admin actions" },
       { key: "admin_per_admin_audit_logs", label: "Immutable per-admin audit logs" },
-      { key: "admin_mandatory_reason_codes", label: "Mandatory reason codes" },
     ],
   },
 ];
@@ -644,8 +642,6 @@ export default function AdminPage() {
     setPlayableEdits(next);
   }, [playableSubmissions]);
 
-  const requireReason = settings.admin_mandatory_reason_codes;
-
   const scheduleStatusClear = useCallback((message) => {
     if (!message) return;
     if (saveTimerRef.current) {
@@ -686,11 +682,7 @@ export default function AdminPage() {
         const res = await apiFetch(path, options);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          if (data?.error === "reason_required") {
-            scheduleActionStatus("Reason code required.");
-          } else {
-            scheduleActionStatus(data?.error || "Unable to complete action.");
-          }
+          scheduleActionStatus(data?.error || "Unable to complete action.");
           return { ok: false, data };
         }
         return { ok: true, data };
@@ -812,10 +804,6 @@ export default function AdminPage() {
   const handleToggle = useCallback(
     async (item) => {
       if (!settingsReady || savingKey) return;
-      if (requireReason && !reasonCode.trim() && item.key !== "admin_mandatory_reason_codes") {
-        scheduleStatusClear("Reason code required.");
-        return;
-      }
       const nextValue = !settings[item.key];
       const previous = settings;
       setSettings((prev) => ({ ...prev, [item.key]: nextValue }));
@@ -831,11 +819,7 @@ export default function AdminPage() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           setSettings(previous);
-          if (data?.error === "reason_required") {
-            scheduleStatusClear("Reason code required.");
-          } else {
-            scheduleStatusClear("Unable to save changes.");
-          }
+          scheduleStatusClear("Unable to save changes.");
           return;
         }
         setSettings({ ...DEFAULT_SETTINGS, ...(data?.settings || {}) });
@@ -856,7 +840,6 @@ export default function AdminPage() {
       apiFetch,
       loadAdminActions,
       reasonCode,
-      requireReason,
       savingKey,
       scheduleStatusClear,
       settings,
@@ -866,10 +849,6 @@ export default function AdminPage() {
 
   const handleResetDefaults = useCallback(async () => {
     if (!settingsReady || savingKey) return;
-    if (requireReason && !reasonCode.trim()) {
-      scheduleStatusClear("Reason code required.");
-      return;
-    }
     setSavingKey("reset");
     try {
       const res = await apiFetch("/admin/settings/reset", {
@@ -878,11 +857,7 @@ export default function AdminPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (data?.error === "reason_required") {
-          scheduleStatusClear("Reason code required.");
-        } else {
-          scheduleStatusClear("Unable to reset defaults.");
-        }
+        scheduleStatusClear("Unable to reset defaults.");
         return;
       }
       setSettings({ ...DEFAULT_SETTINGS, ...(data?.settings || {}) });
@@ -901,7 +876,6 @@ export default function AdminPage() {
     apiFetch,
     loadAdminActions,
     reasonCode,
-    requireReason,
     savingKey,
     scheduleStatusClear,
     settingsReady,
@@ -980,32 +954,6 @@ export default function AdminPage() {
             Back to profile
           </a>
         </header>
-
-        <div className="admin-toolbar">
-          <label className="admin-field">
-            Reason code
-            <input
-              type="text"
-              placeholder={
-                requireReason
-                  ? "Required when changing admin settings"
-                  : "Optional reason for this change"
-              }
-              value={reasonCode}
-              onChange={(event) => setReasonCode(event.target.value)}
-              disabled={Boolean(savingKey)}
-            />
-          </label>
-          <button
-            type="button"
-            className="admin-button"
-            onClick={handleResetDefaults}
-            disabled={Boolean(savingKey)}
-          >
-            Reset defaults
-          </button>
-          {status ? <div className="admin-status-banner">{status}</div> : null}
-        </div>
         {actionStatus ? <div className="admin-status-banner">{actionStatus}</div> : null}
 
         <div className="admin-grid">
@@ -1720,8 +1668,9 @@ export default function AdminPage() {
             <label className="admin-field">
               Thread ID
               <input
-                type="number"
-                min="1"
+                type="text"
+                inputMode="text"
+                placeholder="THR-000123 or 123"
                 value={threadId}
                 onChange={(event) => setThreadId(event.target.value)}
                 disabled={actionBusy}
@@ -1809,8 +1758,9 @@ export default function AdminPage() {
             <label className="admin-field">
               Comment ID
               <input
-                type="number"
-                min="1"
+                type="text"
+                inputMode="text"
+                placeholder="CMT-000456 or 456"
                 value={postId}
                 onChange={(event) => setPostId(event.target.value)}
                 disabled={actionBusy}
@@ -1903,6 +1853,31 @@ export default function AdminPage() {
               ) : null}
             </section>
           ))}
+          <section className="admin-card admin-card-compact">
+            <h2>Settings notes</h2>
+            <p>Optional audit note for resets and admin setting changes.</p>
+            <label className="admin-field admin-field-compact">
+              Reason code
+              <input
+                type="text"
+                placeholder="Optional reason"
+                value={reasonCode}
+                onChange={(event) => setReasonCode(event.target.value)}
+                disabled={Boolean(savingKey)}
+              />
+            </label>
+            <div className="admin-notes-actions">
+              <button
+                type="button"
+                className="admin-button"
+                onClick={handleResetDefaults}
+                disabled={Boolean(savingKey)}
+              >
+                Reset defaults
+              </button>
+              {status ? <div className="admin-status-banner">{status}</div> : null}
+            </div>
+          </section>
         </div>
       </section>
     </main>
