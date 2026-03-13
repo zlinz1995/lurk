@@ -61,13 +61,17 @@ export default function DiscussionsPage() {
   const router = useRouter();
   const [threads, setThreads] = useState([]);
   const [threadDraft, setThreadDraft] = useState(emptyThreadDraft);
+  const [replyDrafts, setReplyDrafts] = useState({});
+  const [expandedReplies, setExpandedReplies] = useState({});
   const [friends, setFriends] = useState(["@circuitmuse", "@quietsignal"]);
   const [blockedUsers, setBlockedUsers] = useState(["@frameskip"]);
   const [openMenuKey, setOpenMenuKey] = useState("");
+  const [openReplyThreadId, setOpenReplyThreadId] = useState("");
   const [lastThreadId, setLastThreadId] = useState("");
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [replySubmittingId, setReplySubmittingId] = useState("");
   const [status, setStatus] = useState("");
 
   const apiFetch = useCallback(async (path, options = {}) => {
@@ -238,12 +242,78 @@ export default function DiscussionsPage() {
     }
   };
 
+  const handleReplyDraftChange = (threadId, value) => {
+    setReplyDrafts((current) => ({ ...current, [threadId]: value }));
+  };
+
+  const setRepliesExpanded = (threadId, nextValue) => {
+    setExpandedReplies((current) => ({ ...current, [threadId]: nextValue }));
+  };
+
+  const handleReplySubmit = async (thread) => {
+    const threadId = thread?.id || "";
+    const body = (replyDrafts[threadId] || "").trim();
+    if (!threadId) return;
+    if (!currentUser) {
+      setStatus("Sign in to reply to a thread.");
+      return;
+    }
+    if (!body) {
+      setStatus("Write a reply before posting.");
+      return;
+    }
+    setReplySubmittingId(threadId);
+    setStatus("");
+    try {
+      const res = await apiFetch(`/threads/${encodeURIComponent(threadId)}/posts`, {
+        method: "POST",
+        body: JSON.stringify({ body }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data?.error || "Unable to post reply.");
+        return;
+      }
+      const createdReply = data?.post || null;
+      if (createdReply) {
+        setThreads((current) =>
+          current.map((entry) =>
+            entry.id === threadId
+              ? {
+                  ...entry,
+                  replies: [...(Array.isArray(entry.replies) ? entry.replies : []), createdReply],
+                }
+              : entry
+          )
+        );
+      } else {
+        await loadThreads();
+      }
+      setReplyDrafts((current) => ({ ...current, [threadId]: "" }));
+      setRepliesExpanded(threadId, true);
+      setOpenReplyThreadId(threadId);
+      setStatus(`Replied to ${threadId}.`);
+    } catch {
+      setStatus("Unable to post reply.");
+    } finally {
+      setReplySubmittingId("");
+    }
+  };
+
   const handleUserAction = (action, thread) => {
     const author = thread.authorHandle;
     const wasFriend = friends.includes(author);
     const wasBlocked = blockedUsers.includes(author);
 
+    if (action === "reply") {
+      setRepliesExpanded(thread.id, true);
+      setOpenReplyThreadId((current) => (current === thread.id ? "" : thread.id));
+      setOpenMenuKey("");
+      return;
+    }
+
     if (action === "report") {
+      setOpenMenuKey("");
       const params = new URLSearchParams({
         category: "other",
         impact: "review-soon",
@@ -380,6 +450,12 @@ export default function DiscussionsPage() {
                     const isBlocked = blockedUsers.includes(thread.authorHandle);
                     const canDeleteThread = Boolean(thread.canDelete);
                     const menuKey = `${thread.id}-${thread.authorHandle}`;
+                    const replies = Array.isArray(thread.replies) ? thread.replies : [];
+                    const replyDraft = replyDrafts[thread.id] || "";
+                    const isReplyOpen = openReplyThreadId === thread.id;
+                    const isReplySubmitting = replySubmittingId === thread.id;
+                    const showReplyPanel = replies.length > 0 || isReplyOpen;
+                    const isRepliesExpanded = Boolean(expandedReplies[thread.id]) || isReplyOpen;
 
                     return (
                       <article key={thread.id} className={index > 0 ? "threadRow withBorder" : "threadRow"}>
@@ -400,6 +476,30 @@ export default function DiscussionsPage() {
                           ) : null}
                         </div>
 
+                        <div className="userRow userRowTop">
+                          <div className="menuShell">
+                            <button
+                              type="button"
+                              className="toggleButton"
+                              onClick={() => setOpenMenuKey((current) => (current === menuKey ? "" : menuKey))}
+                              aria-label={`Open actions for ${thread.authorHandle}`}
+                            >
+                              -
+                            </button>
+                            {openMenuKey === menuKey ? (
+                              <div className="menu" role="menu">
+                                <button type="button" onClick={() => handleUserAction("reply", thread)}>Reply</button>
+                                <button type="button" onClick={() => handleUserAction("report", thread)}>Report</button>
+                                <button type="button" onClick={() => handleUserAction("add", thread)}>{isFriend ? "Remove" : "Add"}</button>
+                                <button type="button" onClick={() => handleUserAction("block", thread)}>{isBlocked ? "Unblock" : "Block"}</button>
+                              </div>
+                            ) : null}
+                          </div>
+                          <span className="user">{thread.authorHandle}</span>
+                          {isFriend ? <span className="pill">Friend</span> : null}
+                          {isBlocked ? <span className="pill danger">Blocked</span> : null}
+                        </div>
+
                         <h3>{thread.title}</h3>
                         <p className="threadCopy">
                           {isBlocked
@@ -407,30 +507,104 @@ export default function DiscussionsPage() {
                             : thread.excerpt}
                         </p>
 
-                        <div className="threadBottom">
-                          <div className="userRow">
-                            <span className="user">{thread.authorHandle}</span>
-                            {isFriend ? <span className="pill">Friend</span> : null}
-                            {isBlocked ? <span className="pill danger">Blocked</span> : null}
-                            <div className="menuShell">
+                        {showReplyPanel ? (
+                          <section className="replyPanel">
+                            <div className="replyPanelHeader">
+                              <div className="replyPanelSummary">
+                                <span className="replyPanelTitle">Replies</span>
+                                <span className="replyPanelMeta">{replies.length}</span>
+                              </div>
                               <button
                                 type="button"
-                                className="toggleButton"
-                                onClick={() => setOpenMenuKey((current) => (current === menuKey ? "" : menuKey))}
-                                aria-label={`Open actions for ${thread.authorHandle}`}
+                                className="replyCollapseButton"
+                                onClick={() => {
+                                  if (isRepliesExpanded && isReplyOpen) {
+                                    setOpenReplyThreadId("");
+                                  }
+                                  setRepliesExpanded(thread.id, !isRepliesExpanded);
+                                }}
                               >
-                                -
+                                {isRepliesExpanded ? "Collapse" : "Expand"}
                               </button>
-                              {openMenuKey === menuKey ? (
-                                <div className="menu" role="menu">
-                                  <button type="button" onClick={() => handleUserAction("report", thread)}>Report</button>
-                                  <button type="button" onClick={() => handleUserAction("add", thread)}>{isFriend ? "Remove" : "Add"}</button>
-                                  <button type="button" onClick={() => handleUserAction("block", thread)}>{isBlocked ? "Unblock" : "Block"}</button>
-                                </div>
-                              ) : null}
                             </div>
-                          </div>
-                        </div>
+                            {isRepliesExpanded ? (
+                              <div className="replyComposer">
+                                {replies.length ? (
+                                  <div className="replyStream">
+                                    {replies.map((reply, replyIndex) => (
+                                      <div
+                                        key={reply.id}
+                                        className={
+                                          replyIndex > 0 ? "replyEntry withDivider" : "replyEntry"
+                                        }
+                                      >
+                                        <div className="replyMetaRow">
+                                          <span className="replyAuthor">
+                                            {reply.author?.displayName || "Unknown user"}
+                                          </span>
+                                          <span className="replyMetaStack">
+                                            <span className="replyId">{reply.id || ""}</span>
+                                            <span className="replyTime">
+                                              {formatRelativeTime(reply.created_at)}
+                                            </span>
+                                          </span>
+                                        </div>
+                                        <p className="replyText">{reply.text || reply.body || ""}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="replyEmpty">No replies yet.</p>
+                                )}
+
+                                {isReplyOpen ? (
+                                  <label className="replyField">
+                                    Reply
+                                    <textarea
+                                      rows={3}
+                                      value={replyDraft}
+                                      onChange={(event) =>
+                                        handleReplyDraftChange(thread.id, event.target.value)
+                                      }
+                                      placeholder={`Reply to ${thread.authorHandle}`}
+                                      disabled={isReplySubmitting}
+                                    />
+                                  </label>
+                                ) : null}
+                                <div className="replyActions">
+                                  {isReplyOpen ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="secondaryButton"
+                                        onClick={() => setOpenReplyThreadId("")}
+                                        disabled={isReplySubmitting}
+                                      >
+                                        Hide
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="primaryButton compactButton"
+                                        onClick={() => handleReplySubmit(thread)}
+                                        disabled={isReplySubmitting}
+                                      >
+                                        {isReplySubmitting ? "Posting..." : "Post Reply"}
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="secondaryButton"
+                                      onClick={() => setOpenReplyThreadId(thread.id)}
+                                    >
+                                      Reply
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ) : null}
+                          </section>
+                        ) : null}
                       </article>
                     );
                   })
@@ -454,11 +628,11 @@ export default function DiscussionsPage() {
         h2, h3 { margin: 0; font-weight: 600; }
         h2 { font-size: 1rem; letter-spacing: 0.02em; }
         h3 { font-size: 1.18rem; }
-        .threadCopy, .muted, .emptyState p, .statusMessage { margin: 0; color: #a9bbd1; line-height: 1.62; font-size: 0.94rem; }
+        .threadCopy, .muted, .emptyState p, .statusMessage, .replyText, .replyEmpty { margin: 0; color: #a9bbd1; line-height: 1.62; font-size: 0.94rem; }
         .statusMessage { text-align: center; }
-        .categoryNav, .connections, .connectionRow, .chipRow, .threadTop, .threadBottom, .userRow, .meta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .categoryNav, .connections, .connectionRow, .chipRow, .threadTop, .userRow, .meta, .replyPanelHeader, .replyPanelSummary, .replyMetaRow, .replyActions, .replyMetaStack { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .categoryNav, .connections { justify-content: center; }
-        .chip, .threadId, .pill, .deleteButton, .toggleButton, .primaryButton, .chipButton { border-radius: 999px; }
+        .chip, .threadId, .pill, .deleteButton, .toggleButton, .primaryButton, .secondaryButton, .chipButton { border-radius: 999px; }
         .chip { padding: 8px 12px; background: rgba(255, 255, 255, 0.05); color: #dbe7f7; font-size: 0.8rem; }
         .categoryNav { gap: 24px; padding-top: 2px; }
         .categoryLink { color: #bad0ea; text-decoration: none; font-size: 0.98rem; padding-bottom: 4px; border-bottom: 1px solid transparent; transition: color 160ms ease, border-color 160ms ease; }
@@ -471,8 +645,10 @@ export default function DiscussionsPage() {
         input, textarea { width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.09); background: rgba(255, 255, 255, 0.035); color: #f4f8ff; font: inherit; }
         input::placeholder, textarea::placeholder { color: #7d92ad; }
         textarea { resize: vertical; }
-        .primaryButton, .deleteButton, .toggleButton, .chipButton, .menu button { border: 0; cursor: pointer; }
+        .primaryButton, .secondaryButton, .deleteButton, .toggleButton, .chipButton, .menu button { border: 0; cursor: pointer; }
         .primaryButton { padding: 12px 18px; background: linear-gradient(135deg, #7aaaff, #93efca); color: #07101a; font-weight: 700; }
+        .secondaryButton { padding: 10px 14px; background: rgba(255, 255, 255, 0.06); color: #eef4ff; }
+        .compactButton { padding: 10px 14px; }
         .connections { justify-content: space-between; gap: 16px; border-top: 1px solid rgba(255, 255, 255, 0.06); border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-block: 14px; }
         .connectionRow { gap: 14px; }
         .sections { gap: 16px; }
@@ -480,7 +656,9 @@ export default function DiscussionsPage() {
         .sectionHeader { display: flex; justify-content: center; text-align: center; padding: 6px 0 10px; }
         .threadRow { display: grid; gap: 14px; padding: 16px 0; }
         .threadRow.withBorder { border-top: 1px solid rgba(255, 255, 255, 0.06); }
-        .threadTop, .threadBottom, .userRow { justify-content: space-between; }
+        .threadTop { justify-content: space-between; }
+        .userRow { justify-content: flex-start; }
+        .userRowTop { margin-top: -2px; }
         .meta { justify-content: flex-start; color: #8da4c3; font-size: 0.8rem; }
         .threadId { padding: 6px 10px; background: rgba(121, 167, 255, 0.14); border: 1px solid rgba(121, 167, 255, 0.18); color: #dce9ff; font-weight: 600; font-size: 0.78rem; }
         .deleteButton { padding: 7px 11px; background: rgba(255, 255, 255, 0.05); color: #eef4ff; }
@@ -489,22 +667,41 @@ export default function DiscussionsPage() {
         .pill.danger { background: rgba(255, 124, 124, 0.14); color: #ffb2b2; }
         .toggleButton { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; background: rgba(255, 255, 255, 0.08); color: #fff; font-size: 1rem; line-height: 1; }
         .menuShell { position: relative; }
-        .menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 132px; padding: 8px; display: grid; gap: 6px; background: rgba(9, 16, 25, 0.98); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34); z-index: 5; }
+        .menu { position: absolute; top: calc(100% + 8px); left: 0; min-width: 148px; padding: 8px; display: grid; gap: 6px; background: rgba(9, 16, 25, 0.98); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34); z-index: 5; }
         .menu button { padding: 9px 11px; border-radius: 10px; text-align: left; background: rgba(255, 255, 255, 0.04); color: #eef4ff; }
         .chipButton { background: rgba(255, 124, 124, 0.12); color: #ffc2c2; }
+        .replyPanel { display: grid; gap: 12px; padding: 14px; border-radius: 20px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .replyPanelHeader { justify-content: space-between; }
+        .replyPanelSummary { gap: 10px; }
+        .replyPanelTitle { font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: #8eb6ff; }
+        .replyPanelMeta { color: #8da4c3; font-size: 0.82rem; }
+        .replyCollapseButton { border: 0; cursor: pointer; padding: 6px 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); color: #dce9ff; }
+        .replyStream { display: grid; gap: 0; border-radius: 16px; background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.06); overflow: hidden; }
+        .replyEntry { display: grid; gap: 6px; padding: 12px 14px; }
+        .replyEntry.withDivider { border-top: 1px solid rgba(255, 255, 255, 0.08); }
+        .replyMetaRow { justify-content: space-between; gap: 10px; }
+        .replyMetaStack { flex-direction: column; align-items: flex-end; gap: 3px; }
+        .replyAuthor { font-weight: 600; color: #edf4ff; font-size: 0.88rem; }
+        .replyId { color: #dce9ff; font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+        .replyTime { color: #8da4c3; font-size: 0.78rem; }
+        .replyComposer { display: grid; gap: 10px; }
+        .replyField { display: grid; gap: 7px; }
+        .replyActions { justify-content: flex-end; }
         .emptyState { display: flex; justify-content: center; padding: 6px 0 12px; }
-        .categoryLink:hover, .primaryButton:hover, .deleteButton:hover, .toggleButton:hover, .menu button:hover, .chipButton:hover { transform: translateY(-1px); }
+        .categoryLink:hover, .primaryButton:hover, .secondaryButton:hover, .deleteButton:hover, .toggleButton:hover, .menu button:hover, .chipButton:hover, .replyCollapseButton:hover { transform: translateY(-1px); }
         @media (max-width: 860px) {
           .surface { padding: 20px 14px 16px; }
           .composerGrid, .connections { grid-template-columns: 1fr; }
           .connections { justify-content: center; }
           .connectionRow { justify-content: center; }
+          .replyActions { justify-content: stretch; }
         }
         @media (max-width: 640px) {
           .discussionPage { padding-inline: 12px; }
           .surface { border-radius: 24px; }
           .categoryNav { gap: 14px; }
           .composerGrid { grid-template-columns: 1fr; }
+          .replyPanelHeader, .replyMetaRow, .replyActions, .replyMetaStack { flex-direction: column; align-items: flex-start; }
         }
       `}</style>
     </main>

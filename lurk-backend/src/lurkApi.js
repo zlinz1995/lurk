@@ -4429,7 +4429,6 @@ function isCommentPostingBlocked(settings) {
   return Boolean(
     settings.emergency_posting_freeze ||
       settings.emergency_comment_lockdown ||
-      settings.content_disable_comments ||
       settings.emergency_feature_killswitch ||
       settings.system_feature_toggle === false ||
       settings.system_incident_response
