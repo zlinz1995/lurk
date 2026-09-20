@@ -141,6 +141,18 @@ export default function NavIconBar() {
           ),
         },
         {
+          href: "/lurkguard",
+          label: "LurkGuard",
+          title: "LurkGuard for Android",
+          activePrefix: "/lurkguard",
+          icon: (
+            <>
+              <path d="M12 2.5c2.7 2.1 5.2 2.7 7.3 3.2v5.2c0 4.5-2.5 7.8-7.3 10.1-4.8-2.3-7.3-5.6-7.3-10.1V5.7C6.8 5.2 9.3 4.6 12 2.5z"></path>
+              <path d="M8.6 11.8l2.1 2.1 4.8-5"></path>
+            </>
+          ),
+        },
+        {
           href: "/discussions",
           label: "Discussions",
           title: "Threaded Discussions",
