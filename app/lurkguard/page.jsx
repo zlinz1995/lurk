@@ -6,7 +6,7 @@ export const metadata = {
     "Download LurkGuard, a private Android Phone and SMS client with commitment-based contact blocking and optional Device Owner protection.",
 };
 
-const APP_SHA = "f749afa545e6388e985966480580ad590dac614f81b4c6f71ef9a6b85a398325";
+const APP_SHA = "c7fa7b09f4f09eeb42d3131c3cf358bf3805003d50478084240ac12e7adb65b3";
 const CONTROLLER_SHA = "d4bada3d0c13b43464b00c9c5ffca745963108b1620ed29958c98855d6946202";
 
 const capabilities = [
@@ -19,7 +19,8 @@ const capabilities = [
 ];
 
 const releases = [
-  ["3.0", "Current", "Adds safe Open in LurkGuard actions for Lurk profiles, discussions, rooms, and reports. Website links open the matching message, call, or Blacklist screen and still require confirmation in LurkGuard."],
+  ["3.1", "Current", "Adds the one-time, privacy-preserving installation handshake used by the Lurk Safety Center. The check returns only that LurkGuard is installed and its version."],
+  ["3.0", "Lurk integration", "Adds safe Open in LurkGuard actions for Lurk profiles, discussions, rooms, and reports. Website links open the matching message, call, or Blacklist screen and still require confirmation in LurkGuard."],
   ["2.9", "Settings redesign", "Moves Blacklist, sound controls, app setup, Controller access, and Contacts into a Google Phone-inspired Settings screen. The main navigation now focuses on Phone and Messages."],
   ["2.8", "Dialer refinement", "Keeps dialed numbers prominent while rendering ABC/DEF letter groups smaller and muted."],
   ["2.7", "Phone redesign", "Introduces the always-open Android-style dialpad and modern in-call controls."],
@@ -59,8 +60,8 @@ export default function LurkGuardPage() {
             a contact, changing that decision can require verification and a real waiting period.
           </p>
           <div className={styles.heroActions}>
-            <a className={styles.primaryButton} href="/downloads/lurkguard/LurkGuard-3.0.apk" download>
-              Download LurkGuard 3.0
+            <a className={styles.primaryButton} href="/downloads/lurkguard/LurkGuard-3.1.apk" download>
+              Download LurkGuard 3.1
             </a>
             <a className={styles.secondaryButton} href="#install">
               Installation guide
@@ -83,7 +84,7 @@ export default function LurkGuardPage() {
         <div className={styles.sectionHeading}>
           <span className={styles.eyebrow}>The interface</span>
           <h2 id="screens-title">Phone and messages without the clutter</h2>
-          <p>Android 17 VM screenshots of the interface retained in the 3.0 release offered below.</p>
+          <p>Android 17 VM screenshots of the interface retained in the 3.1 release offered below.</p>
         </div>
         <div className={styles.screenshotGrid}>
           <figure>
@@ -130,8 +131,8 @@ export default function LurkGuardPage() {
         <div className={styles.downloadGrid}>
           <DownloadCard
             title="LurkGuard"
-            version="Version 3.0 · Android 11+"
-            href="/downloads/lurkguard/LurkGuard-3.0.apk"
+            version="Version 3.1 · Android 11+"
+            href="/downloads/lurkguard/LurkGuard-3.1.apk"
             hash={APP_SHA}
           >
             The Phone, SMS/MMS, Blacklist, sounds, and writing-assistant application.
@@ -161,7 +162,7 @@ export default function LurkGuardPage() {
             <span className={styles.stepTag}>Standard installation</span>
             <h3>No reset required</h3>
             <ol>
-              <li>Download LurkGuard 3.0 and verify its SHA-256 checksum.</li>
+              <li>Download LurkGuard 3.1 and verify its SHA-256 checksum.</li>
               <li>Allow your browser or file manager to install unknown apps, then open the APK.</li>
               <li>Open LurkGuard → Settings → App setup &amp; permissions.</li>
               <li>Grant the requested permissions and select LurkGuard as the default Phone and SMS app.</li>
@@ -182,7 +183,7 @@ export default function LurkGuardPage() {
             <pre><code>{`adb install LurkGuard-Controller-1.1.apk
 adb shell dpm set-device-owner local.lurkguard.controller/local.lurkguard.controller.AdminReceiver
 adb shell dpm list-owners
-adb install LurkGuard-3.0.apk`}</code></pre>
+adb install LurkGuard-3.1.apk`}</code></pre>
           </article>
         </div>
         <div className={styles.warning}>
@@ -195,7 +196,7 @@ adb install LurkGuard-3.0.apk`}</code></pre>
       <section className={styles.section} aria-labelledby="releases-title">
         <div className={styles.sectionHeading}>
           <span className={styles.eyebrow}>Release notes</span>
-          <h2 id="releases-title">How LurkGuard reached 3.0</h2>
+          <h2 id="releases-title">How LurkGuard reached 3.1</h2>
         </div>
         <div className={styles.timeline}>
           {releases.map(([version, label, body]) => (

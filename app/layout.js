@@ -179,6 +179,9 @@ export default function RootLayout({ children }) {
                   <button type="button" id="chat-room-copy" className="chat-room-button" disabled>
                     Copy link
                   </button>
+                  <button type="button" id="chat-room-mute" className="chat-room-button">
+                    Mute room
+                  </button>
                 </div>
                 <div
                   id="chat-room-new-panel"

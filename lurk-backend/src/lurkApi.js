@@ -855,6 +855,29 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
       submittedAt,
       destination,
     };
+    try {
+      const reportResult = db.prepare(
+        `INSERT OR IGNORE INTO safety_reports
+          (request_id, user_id, category, impact, link, details, contact, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`
+      ).run(
+        requestId || null,
+        session?.user?.id || null,
+        category,
+        impact,
+        link,
+        details,
+        contact || null,
+        submittedAt,
+        submittedAt
+      );
+      const reportRow = requestId
+        ? db.prepare(`SELECT id FROM safety_reports WHERE request_id = ?`).get(requestId)
+        : { id: Number(reportResult.lastInsertRowid) };
+      payload.reportId = reportRow?.id || null;
+    } catch (error) {
+      console.warn("report dashboard persistence failed", error);
+    }
     const statusCode = 201;
     if (requestId) {
       reportRequestCache.set(requestId, {
@@ -868,6 +891,120 @@ export async function attachApiLayer({ app, server, dev = false } = {}) {
   };
   app.post("/reports", reportLimiter, submitReport);
   app.post("/api/report", reportLimiter, submitReport);
+
+  app.get("/safety", authRelaxedLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const userId = session.user.id;
+    const blockedAccounts = db.prepare(
+      `SELECT b.blocked_user_id AS id, u.display_name AS displayName, u.avatar_url AS avatarUrl,
+              b.created_at AS createdAt
+       FROM safety_blocks b
+       JOIN users u ON u.id = b.blocked_user_id
+       WHERE b.user_id = ?
+       ORDER BY datetime(b.created_at) DESC`
+    ).all(userId).map((row) => ({ ...row, avatarUrl: resolveAvatarUrlForResponse(req, row.avatarUrl || "") }));
+    const mutedItems = db.prepare(
+      `SELECT id, kind, target_key AS target, label, created_at AS createdAt
+       FROM safety_mutes WHERE user_id = ? ORDER BY datetime(created_at) DESC`
+    ).all(userId);
+    const activeReports = db.prepare(
+      `SELECT id, category, impact, link, contact, status, created_at AS createdAt,
+              updated_at AS updatedAt
+       FROM safety_reports
+       WHERE user_id = ? AND status = 'active'
+       ORDER BY datetime(created_at) DESC`
+    ).all(userId);
+    res.json({ blockedAccounts, mutedItems, activeReports });
+  });
+
+  app.post("/safety/blocks", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const blockedUserId = Number.parseInt(req?.body?.userId, 10);
+    if (!Number.isFinite(blockedUserId) || blockedUserId === session.user.id) {
+      res.status(400).json({ error: "invalid_block_target" });
+      return;
+    }
+    const target = db.prepare(`SELECT id, display_name FROM users WHERE id = ?`).get(blockedUserId);
+    if (!target) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+    db.prepare(
+      `INSERT OR IGNORE INTO safety_blocks (user_id, blocked_user_id) VALUES (?, ?)`
+    ).run(session.user.id, blockedUserId);
+    res.status(201).json({
+      blockedAccount: { id: target.id, displayName: target.display_name || "Unknown user" },
+    });
+  });
+
+  app.delete("/safety/blocks/:id", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const blockedUserId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(blockedUserId)) {
+      res.status(400).json({ error: "invalid_block_target" });
+      return;
+    }
+    db.prepare(`DELETE FROM safety_blocks WHERE user_id = ? AND blocked_user_id = ?`)
+      .run(session.user.id, blockedUserId);
+    res.json({ ok: true });
+  });
+
+  app.post("/safety/mutes", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const kind = String(req?.body?.kind || "").toLowerCase();
+    const target = sanitizeReportField(req?.body?.target, 160);
+    const label = sanitizeReportField(req?.body?.label || target, 160);
+    if (!["discussion", "room"].includes(kind) || !target || !label) {
+      res.status(400).json({ error: "invalid_mute" });
+      return;
+    }
+    db.prepare(
+      `INSERT INTO safety_mutes (user_id, kind, target_key, label)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, kind, target_key) DO UPDATE SET label = excluded.label`
+    ).run(session.user.id, kind, target, label);
+    const row = db.prepare(
+      `SELECT id, kind, target_key AS target, label, created_at AS createdAt
+       FROM safety_mutes WHERE user_id = ? AND kind = ? AND target_key = ?`
+    ).get(session.user.id, kind, target);
+    res.status(201).json({ mutedItem: row });
+  });
+
+  app.delete("/safety/mutes/:id", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const muteId = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(muteId)) {
+      res.status(400).json({ error: "invalid_mute" });
+      return;
+    }
+    db.prepare(`DELETE FROM safety_mutes WHERE id = ? AND user_id = ?`)
+      .run(muteId, session.user.id);
+    res.json({ ok: true });
+  });
+
+  app.patch("/safety/reports/:id", authLimiter, (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const reportId = Number.parseInt(req.params.id, 10);
+    const status = req?.body?.status === "closed" ? "closed" : "";
+    if (!Number.isFinite(reportId) || !status) {
+      res.status(400).json({ error: "invalid_report_update" });
+      return;
+    }
+    const result = db.prepare(
+      `UPDATE safety_reports SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?`
+    ).run(status, new Date().toISOString(), reportId, session.user.id);
+    if (!result.changes) {
+      res.status(404).json({ error: "report_not_found" });
+      return;
+    }
+    res.json({ ok: true, status });
+  });
 
   app.get("/auth/me", authRelaxedLimiter, (req, res) => {
     const session = requireSession(req, res);
@@ -5236,6 +5373,44 @@ function prepareSchema(db) {
       FOREIGN KEY(resolved_by) REFERENCES users(id) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_user_risk_flags_user ON user_risk_flags(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS safety_blocks (
+      user_id INTEGER NOT NULL,
+      blocked_user_id INTEGER NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      PRIMARY KEY(user_id, blocked_user_id),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(blocked_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_safety_blocks_user ON safety_blocks(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS safety_mutes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('discussion', 'room')),
+      target_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE(user_id, kind, target_key),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_safety_mutes_user ON safety_mutes(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS safety_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_id TEXT UNIQUE,
+      user_id INTEGER,
+      category TEXT NOT NULL,
+      impact TEXT NOT NULL,
+      link TEXT NOT NULL,
+      details TEXT NOT NULL,
+      contact TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at DATETIME,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_safety_reports_user ON safety_reports(user_id, status, created_at DESC);
   `);
 
   ensureUserColumns(db);

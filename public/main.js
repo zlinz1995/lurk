@@ -263,6 +263,7 @@
     const newPrivateBtn = document.getElementById("chat-room-new-private");
     const newHint = document.getElementById("chat-room-new-hint");
     const copyBtn = document.getElementById("chat-room-copy");
+    const muteBtn = document.getElementById("chat-room-mute");
     const status = document.getElementById("chat-room-status");
     const help = document.getElementById("chat-room-help");
     const modeDropInBtn = document.getElementById("chat-mode-dropin");
@@ -320,6 +321,7 @@
       roomInput.maxLength = isPrivate ? 12 : 24;
       lobbyBtn.hidden = isPrivate;
       copyBtn.hidden = !isPrivate;
+      if (muteBtn) muteBtn.hidden = isPrivate;
       if (publicList) {
         publicList.hidden = isPrivate;
         publicList.setAttribute("aria-hidden", isPrivate ? "true" : "false");
@@ -610,6 +612,39 @@
       if (event.key === "Enter") {
         event.preventDefault();
         applySelection();
+      }
+    });
+    muteBtn?.addEventListener("click", async () => {
+      if (currentVisibility !== "public") return;
+      const roomName = normalizePublicName(roomInput.value) || "LOBBY";
+      const token = getStoredAuthToken();
+      const sameOrigin = isApiSameOrigin();
+      if (!token && !sameOrigin) {
+        status.textContent = "Sign in to save muted rooms.";
+        return;
+      }
+      muteBtn.disabled = true;
+      status.textContent = `Muting ${roomName}…`;
+      try {
+        const response = await fetch(apiPath("/safety/mutes"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          credentials: sameOrigin ? "include" : "omit",
+          body: JSON.stringify({
+            kind: "room",
+            target: roomName,
+            label: `Room: ${roomName}`,
+          }),
+        });
+        if (!response.ok) throw new Error(response.status === 401 ? "Sign in to mute rooms." : "Room could not be muted.");
+        status.textContent = `${roomName} is muted. Manage it in the Safety Center.`;
+      } catch (error) {
+        status.textContent = error?.message || "Room could not be muted.";
+      } finally {
+        muteBtn.disabled = false;
       }
     });
 

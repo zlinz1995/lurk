@@ -167,8 +167,8 @@ export default function NavIconBar() {
         },
         {
           href: "/report",
-          label: "Report",
-          title: "Report",
+          label: "Safety",
+          title: "Lurk Safety Center",
           icon: (
             <>
               <path d="M4 4h10l2 4h4v10H4z"></path>

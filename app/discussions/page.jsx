@@ -65,7 +65,8 @@ export default function DiscussionsPage() {
   const [replyDrafts, setReplyDrafts] = useState({});
   const [expandedReplies, setExpandedReplies] = useState({});
   const [friends, setFriends] = useState(["@circuitmuse", "@quietsignal"]);
-  const [blockedUsers, setBlockedUsers] = useState(["@frameskip"]);
+  const [blockedAccounts, setBlockedAccounts] = useState([]);
+  const [mutedItems, setMutedItems] = useState([]);
   const [openMenuKey, setOpenMenuKey] = useState("");
   const [openReplyThreadId, setOpenReplyThreadId] = useState("");
   const [lastThreadId, setLastThreadId] = useState("");
@@ -110,6 +111,10 @@ export default function DiscussionsPage() {
   }, []);
 
   const currentUserHandle = currentUser?.displayName || "";
+  const blockedUsers = useMemo(
+    () => blockedAccounts.map((account) => account.displayName),
+    [blockedAccounts]
+  );
 
   const normalizedThreads = useMemo(
     () =>
@@ -156,11 +161,28 @@ export default function DiscussionsPage() {
     }
   }, [apiFetch]);
 
+  const loadSafety = useCallback(async () => {
+    try {
+      const res = await apiFetch("/safety");
+      if (!res.ok) {
+        setBlockedAccounts([]);
+        setMutedItems([]);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setBlockedAccounts(Array.isArray(data?.blockedAccounts) ? data.blockedAccounts : []);
+      setMutedItems(Array.isArray(data?.mutedItems) ? data.mutedItems : []);
+    } catch {
+      setBlockedAccounts([]);
+      setMutedItems([]);
+    }
+  }, [apiFetch]);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       setLoading(true);
-      await Promise.all([loadCurrentUser(), loadThreads()]);
+      await Promise.all([loadCurrentUser(), loadThreads(), loadSafety()]);
       if (cancelled) return;
     };
     load();
@@ -171,7 +193,7 @@ export default function DiscussionsPage() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [loadCurrentUser, loadThreads]);
+  }, [loadCurrentUser, loadSafety, loadThreads]);
 
   const handleDraftChange = ({ target: { name, value } }) =>
     setThreadDraft((current) => ({ ...current, [name]: value }));
@@ -301,10 +323,13 @@ export default function DiscussionsPage() {
     }
   };
 
-  const handleUserAction = (action, thread) => {
+  const handleUserAction = async (action, thread) => {
     const author = thread.authorHandle;
     const wasFriend = friends.includes(author);
     const wasBlocked = blockedUsers.includes(author);
+    const mutedItem = mutedItems.find(
+      (item) => item.kind === "discussion" && item.target === thread.id
+    );
 
     if (action === "reply") {
       setRepliesExpanded(thread.id, true);
@@ -329,14 +354,58 @@ export default function DiscussionsPage() {
       setFriends((current) =>
         wasFriend ? current.filter((entry) => entry !== author) : [...current, author]
       );
-      setBlockedUsers((current) => current.filter((entry) => entry !== author));
+      if (wasBlocked && thread.author?.id) {
+        await apiFetch(`/safety/blocks/${thread.author.id}`, { method: "DELETE" });
+        setBlockedAccounts((current) => current.filter((entry) => entry.id !== thread.author.id));
+      }
     }
 
     if (action === "block") {
-      setBlockedUsers((current) =>
-        wasBlocked ? current.filter((entry) => entry !== author) : [...current, author]
+      if (!thread.author?.id) {
+        setStatus("This account cannot be added to your Safety Center.");
+        return;
+      }
+      const res = await apiFetch(
+        wasBlocked ? `/safety/blocks/${thread.author.id}` : "/safety/blocks",
+        wasBlocked
+          ? { method: "DELETE" }
+          : { method: "POST", body: JSON.stringify({ userId: thread.author.id }) }
       );
+      if (!res.ok) {
+        setStatus(res.status === 401 ? "Sign in to save account blocks." : "Unable to update this block.");
+        return;
+      }
+      if (wasBlocked) {
+        setBlockedAccounts((current) => current.filter((entry) => entry.id !== thread.author.id));
+      } else {
+        setBlockedAccounts((current) => [
+          { id: thread.author.id, displayName: author },
+          ...current.filter((entry) => entry.id !== thread.author.id),
+        ]);
+      }
       setFriends((current) => current.filter((entry) => entry !== author));
+    }
+
+    if (action === "mute") {
+      const res = await apiFetch(
+        mutedItem ? `/safety/mutes/${mutedItem.id}` : "/safety/mutes",
+        mutedItem
+          ? { method: "DELETE" }
+          : {
+              method: "POST",
+              body: JSON.stringify({ kind: "discussion", target: thread.id, label: thread.title }),
+            }
+      );
+      if (!res.ok) {
+        setStatus(res.status === 401 ? "Sign in to save muted discussions." : "Unable to update this mute.");
+        return;
+      }
+      if (mutedItem) {
+        setMutedItems((current) => current.filter((item) => item.id !== mutedItem.id));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        if (data?.mutedItem) setMutedItems((current) => [data.mutedItem, ...current]);
+      }
     }
 
     setOpenMenuKey("");
@@ -417,14 +486,17 @@ export default function DiscussionsPage() {
           <div className="connectionRow">
             <span className="connectionLabel">Blocked</span>
             <div className="chipRow">
-              {blockedUsers.length ? blockedUsers.map((handle) => (
+              {blockedAccounts.length ? blockedAccounts.map((account) => (
                 <button
-                  key={handle}
+                  key={account.id}
                   type="button"
                   className="chip chipButton"
-                  onClick={() => setBlockedUsers((current) => current.filter((entry) => entry !== handle))}
+                  onClick={async () => {
+                    const res = await apiFetch(`/safety/blocks/${account.id}`, { method: "DELETE" });
+                    if (res.ok) setBlockedAccounts((current) => current.filter((entry) => entry.id !== account.id));
+                  }}
                 >
-                  {handle}
+                  {account.displayName}
                 </button>
               )) : <span className="muted">None</span>}
             </div>
@@ -449,6 +521,10 @@ export default function DiscussionsPage() {
                   categoryThreads.map((thread, index) => {
                     const isFriend = friends.includes(thread.authorHandle);
                     const isBlocked = blockedUsers.includes(thread.authorHandle);
+                    const mutedItem = mutedItems.find(
+                      (item) => item.kind === "discussion" && item.target === thread.id
+                    );
+                    const isMuted = Boolean(mutedItem);
                     const canDeleteThread = Boolean(thread.canDelete);
                     const menuKey = `${thread.id}-${thread.authorHandle}`;
                     const replies = Array.isArray(thread.replies) ? thread.replies : [];
@@ -493,6 +569,7 @@ export default function DiscussionsPage() {
                                 <button type="button" onClick={() => handleUserAction("report", thread)}>Report</button>
                                 <button type="button" onClick={() => handleUserAction("add", thread)}>{isFriend ? "Remove" : "Add"}</button>
                                 <button type="button" onClick={() => handleUserAction("block", thread)}>{isBlocked ? "Unblock" : "Block"}</button>
+                                <button type="button" onClick={() => handleUserAction("mute", thread)}>{isMuted ? "Unmute discussion" : "Mute discussion"}</button>
                                 <LurkGuardActions
                                   compact
                                   label={thread.authorHandle}
@@ -504,16 +581,19 @@ export default function DiscussionsPage() {
                           <span className="user">{thread.authorHandle}</span>
                           {isFriend ? <span className="pill">Friend</span> : null}
                           {isBlocked ? <span className="pill danger">Blocked</span> : null}
+                          {isMuted ? <span className="pill">Muted</span> : null}
                         </div>
 
                         <h3>{thread.title}</h3>
                         <p className="threadCopy">
-                          {isBlocked
+                          {isMuted
+                            ? "This discussion is muted. Unmute it from the action menu or Safety Center."
+                            : isBlocked
                             ? "This thread is from a blocked user. Unblock them from the strip above or with the same toggle."
                             : thread.excerpt}
                         </p>
 
-                        {showReplyPanel ? (
+                        {showReplyPanel && !isMuted ? (
                           <section className="replyPanel">
                             <div className="replyPanelHeader">
                               <div className="replyPanelSummary">

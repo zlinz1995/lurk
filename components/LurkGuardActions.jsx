@@ -25,15 +25,16 @@ export default function LurkGuardActions({
   source = "",
   compact = false,
   title = "Open in LurkGuard",
+  actions = ACTIONS.map(([action]) => action),
 }) {
   const links = useMemo(
     () =>
-      ACTIONS.map(([action, actionLabel]) => ({
+      ACTIONS.filter(([action]) => actions.includes(action)).map(([action, actionLabel]) => ({
         action,
         label: actionLabel,
         href: buildIntentUrl({ action, label, phone, source }),
       })),
-    [label, phone, source]
+    [actions, label, phone, source]
   );
 
   const openAction = (event) => {
