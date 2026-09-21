@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import LurkGuardActions from "../../components/LurkGuardActions.jsx";
 
 const AUTH_TOKEN_KEY = "lurkAuthToken";
 
@@ -529,6 +530,12 @@ export default function ProfileClient() {
                 </div>
               ))}
             </div>
+            {!profile.isSelf ? (
+              <LurkGuardActions
+                label={profile.displayName || "Lurk profile"}
+                source={`/profile?id=${encodeURIComponent(profileId)}`}
+              />
+            ) : null}
             {status ? <div className="profile-status">{status}</div> : null}
             {profile.isSelf ? (
               <form className="auth-form profile-edit" onSubmit={handleProfileSave}>

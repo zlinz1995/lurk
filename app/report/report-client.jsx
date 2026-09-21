@@ -2,6 +2,7 @@
 
 import CustomSelect from "../../components/CustomSelect.jsx";
 import { useCallback, useEffect, useState } from "react";
+import LurkGuardActions from "../../components/LurkGuardActions.jsx";
 
 const SUPPORT_EMAIL = "support@lurk-app.com";
 const REPORT_SUBMIT_TIMEOUT_MS = 20_000;
@@ -189,6 +190,11 @@ export default function ReportClient() {
             </div>
             {reportStatus.message ? <p className={`status ${reportStatus.state} span2`}>{reportStatus.message}</p> : null}
           </form>
+          <LurkGuardActions
+            label={reportDraft.contact || "Reported Lurk contact"}
+            source={reportDraft.link || "/report"}
+            title="Continue with LurkGuard"
+          />
         </div>
       </section>
 

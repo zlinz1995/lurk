@@ -4,6 +4,7 @@ import "./globals.css";
 import { resolveApiBase } from "./src/resolveApiBase.js";
 import ChatShell from "../components/ChatShell.jsx";
 import NavIconBar from "../components/NavIconBar.jsx";
+import LurkGuardActions from "../components/LurkGuardActions.jsx";
 
 export const metadata = {
   title: "Lurk",
@@ -241,6 +242,11 @@ export default function RootLayout({ children }) {
                   <span className="chat-room-list-label">Active public rooms</span>
                   <div id="chat-public-rooms" className="chat-public-rooms"></div>
                 </div>
+                <LurkGuardActions
+                  label="Current Lurk room"
+                  source="/rooms"
+                  title="Open room tools in LurkGuard"
+                />
               </div>
               <div id="chat-room-status" className="chat-room-status">
                 Public lobby

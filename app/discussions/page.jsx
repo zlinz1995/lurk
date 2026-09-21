@@ -1,6 +1,7 @@
 "use client";
 
 import CustomSelect from "../../components/CustomSelect.jsx";
+import LurkGuardActions from "../../components/LurkGuardActions.jsx";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -492,6 +493,11 @@ export default function DiscussionsPage() {
                                 <button type="button" onClick={() => handleUserAction("report", thread)}>Report</button>
                                 <button type="button" onClick={() => handleUserAction("add", thread)}>{isFriend ? "Remove" : "Add"}</button>
                                 <button type="button" onClick={() => handleUserAction("block", thread)}>{isBlocked ? "Unblock" : "Block"}</button>
+                                <LurkGuardActions
+                                  compact
+                                  label={thread.authorHandle}
+                                  source={`/discussions?thread=${encodeURIComponent(thread.id)}`}
+                                />
                               </div>
                             ) : null}
                           </div>
