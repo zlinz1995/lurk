@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 export default function ChatShell() {
   useEffect(() => {
-    const bubble = document.getElementById("live-chat-bubble");
+    const triggers = Array.from(document.querySelectorAll("[data-live-chat-trigger]"));
     const panel = document.getElementById("live-chat-panel");
     const headerToggle = document.querySelector(".chat-header-toggle");
     if (!panel) return;
@@ -28,7 +28,7 @@ export default function ChatShell() {
       }
     };
 
-    bubble?.addEventListener("click", toggle);
+    triggers.forEach((trigger) => trigger.addEventListener("click", toggle));
     headerToggle?.addEventListener("click", toggle);
 
     // Ensure chat runtime script is present (idempotent)
@@ -42,7 +42,7 @@ export default function ChatShell() {
     }
 
     return () => {
-      bubble?.removeEventListener("click", toggle);
+      triggers.forEach((trigger) => trigger.removeEventListener("click", toggle));
       headerToggle?.removeEventListener("click", toggle);
     };
   }, []);

@@ -6,27 +6,20 @@ import { usePathname } from "next/navigation";
 const AUTH_TOKEN_KEY = "lurkAuthToken";
 
 const getApiContext = () => {
-  if (typeof document === "undefined" || typeof window === "undefined") {
-    return { base: "", sameOrigin: true };
-  }
+  if (typeof document === "undefined" || typeof window === "undefined") return { base: "", sameOrigin: true };
   const base = document.documentElement?.dataset?.apiBase || "";
-  if (!base) {
-    return { base: "", sameOrigin: true };
-  }
+  if (!base) return { base: "", sameOrigin: true };
   try {
-    const origin = new URL(base).origin;
-    return { base, sameOrigin: origin === window.location.origin };
+    return { base, sameOrigin: new URL(base).origin === window.location.origin };
   } catch {
     return { base: "", sameOrigin: true };
   }
 };
 
 const buildApiUrl = (base, path) => {
-  if (!path) return base || "";
   if (/^https?:\/\//i.test(path)) return path;
-  if (!base) return path.startsWith("/") ? path : `/${path}`;
   const normalized = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${normalized}`;
+  return base ? `${base}${normalized}` : normalized;
 };
 
 const readAuthToken = () => {
@@ -40,40 +33,35 @@ const readAuthToken = () => {
 const isActivePath = (pathname, href, activePrefix) => {
   if (!pathname) return false;
   if (href === "/") return pathname === "/";
-  if (Array.isArray(activePrefix)) {
-    return activePrefix.some((prefix) => pathname.startsWith(prefix));
-  }
-  if (activePrefix) return pathname.startsWith(activePrefix);
-  return pathname.startsWith(href);
+  if (Array.isArray(activePrefix)) return activePrefix.some((prefix) => pathname.startsWith(prefix));
+  return pathname.startsWith(activePrefix || href);
 };
+
+const links = [
+  { href: "/", label: "Home" },
+  { href: "/discussions", label: "Discussions" },
+  { href: "/playables", label: "Playables" },
+  { href: "/lurkguard", label: "LurkGuard" },
+  { href: "/report", label: "Safety" },
+  { href: "/about", label: "About" },
+];
 
 export default function NavIconBar() {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const accountHref = "/account";
-
-  const handleBarToggle = useCallback(() => {
-    setCollapsed((prev) => !prev);
-  }, []);
 
   const loadAdminStatus = useCallback(async () => {
     const token = readAuthToken();
-    if (!token) {
-      return false;
-    }
+    if (!token) return false;
     try {
-      const apiContext = getApiContext();
-      const headers = new Headers();
-      headers.set("Authorization", `Bearer ${token}`);
-      const res = await fetch(buildApiUrl(apiContext.base, "/auth/me"), {
-        headers,
-        credentials: apiContext.sameOrigin ? "include" : "omit",
+      const context = getApiContext();
+      const response = await fetch(buildApiUrl(context.base, "/auth/me"), {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: context.sameOrigin ? "include" : "omit",
       });
-      if (!res.ok) {
-        return false;
-      }
-      const data = await res.json().catch(() => ({}));
+      if (!response.ok) return false;
+      const data = await response.json().catch(() => ({}));
       return Boolean(data?.user?.isAdmin);
     } catch {
       return false;
@@ -84,180 +72,72 @@ export default function NavIconBar() {
     let cancelled = false;
     const refresh = async () => {
       const next = await loadAdminStatus();
-      if (!cancelled) {
-        setIsAdmin(next);
-      }
-    };
-
-    refresh();
-
-    const handleAuthChange = () => {
-      refresh();
+      if (!cancelled) setIsAdmin(next);
     };
     const handleStorage = (event) => {
-      if (!event || event.key === AUTH_TOKEN_KEY || event.key === null) {
-        refresh();
-      }
+      if (!event || event.key === AUTH_TOKEN_KEY || event.key === null) refresh();
     };
-
-    window.addEventListener("lurk-auth-change", handleAuthChange);
+    refresh();
+    window.addEventListener("lurk-auth-change", refresh);
     window.addEventListener("storage", handleStorage);
-
     return () => {
       cancelled = true;
-      window.removeEventListener("lurk-auth-change", handleAuthChange);
+      window.removeEventListener("lurk-auth-change", refresh);
       window.removeEventListener("storage", handleStorage);
     };
   }, [loadAdminStatus]);
 
-  const navLinks = useMemo(
-    () => {
-      const links = [
-        {
-          href: "/",
-          label: "Home",
-          title: "Home",
-          icon: (
-            <>
-              <path d="M3 10.5L12 4l9 6.5"></path>
-              <path d="M5 11v9h14v-9"></path>
-              <path d="M10 14h4v6h-4z"></path>
-            </>
-          ),
-        },
-        {
-          href: "/playables",
-          label: "Playables",
-          title: "Playables",
-          activePrefix: "/playables",
-          icon: (
-            <>
-              <rect x="3.5" y="7" width="17" height="10" rx="3"></rect>
-              <path d="M8 10v4"></path>
-              <path d="M6 12h4"></path>
-              <circle cx="16.5" cy="11.5" r="1.3"></circle>
-              <circle cx="18.5" cy="13.5" r="1.3"></circle>
-            </>
-          ),
-        },
-        {
-          href: "/lurkguard",
-          label: "LurkGuard",
-          title: "LurkGuard for Android",
-          activePrefix: "/lurkguard",
-          icon: (
-            <>
-              <path d="M12 2.5c2.7 2.1 5.2 2.7 7.3 3.2v5.2c0 4.5-2.5 7.8-7.3 10.1-4.8-2.3-7.3-5.6-7.3-10.1V5.7C6.8 5.2 9.3 4.6 12 2.5z"></path>
-              <path d="M8.6 11.8l2.1 2.1 4.8-5"></path>
-            </>
-          ),
-        },
-        {
-          href: "/discussions",
-          label: "Discussions",
-          title: "Threaded Discussions",
-          activePrefix: "/discussions",
-          icon: (
-            <>
-              <path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H11l-4 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z"></path>
-              <path d="M8 10h8"></path>
-              <path d="M8 13h5"></path>
-            </>
-          ),
-        },
-        {
-          href: "/report",
-          label: "Safety",
-          title: "Lurk Safety Center",
-          icon: (
-            <>
-              <path d="M4 4h10l2 4h4v10H4z"></path>
-              <path d="M10 4v16"></path>
-              <circle cx="16.5" cy="15.5" r="1.5"></circle>
-            </>
-          ),
-        },
-        {
-          href: "/about",
-          label: "About",
-          title: "About and Terms",
-          activePrefix: "/about",
-          icon: (
-            <>
-              <circle cx="12" cy="12" r="9"></circle>
-              <rect x="11.2" y="10" width="1.6" height="6" rx="0.8"></rect>
-              <circle cx="12" cy="7.3" r="1.1"></circle>
-            </>
-          ),
-        },
-        {
-          href: accountHref,
-          label: "Account",
-          title: "Account",
-          activePrefix: ["/account", "/profile"],
-          icon: (
-            <>
-              <circle cx="12" cy="8" r="4"></circle>
-              <path d="M4 20c1.6-4.2 14.4-4.2 16 0"></path>
-            </>
-          ),
-        },
-      ];
+  useEffect(() => setMenuOpen(false), [pathname]);
 
-      if (isAdmin) {
-        links.push({
-          href: "/admin",
-          label: "Admin",
-          title: "Administrator Console",
-          activePrefix: "/admin",
-          icon: (
-            <>
-              <path d="M12 2l7 3v6c0 4.6-3 8.8-7 11-4-2.2-7-6.4-7-11V5l7-3z"></path>
-              <path d="M9 12l2 2 4-4"></path>
-            </>
-          ),
-        });
-      }
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [menuOpen]);
 
-      return links;
-    },
-    [accountHref, isAdmin]
+  const accountActive = useMemo(
+    () => isActivePath(pathname, "/account", ["/account", "/profile", "/settings"]),
+    [pathname]
   );
 
   return (
-    <nav
-      className={`nav-icon-bar ${collapsed ? "is-collapsed" : ""}`}
-      aria-label="Secondary navigation"
-    >
-      <button
-        type="button"
-        className="nav-icon-hit-area"
-        aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-        aria-expanded={!collapsed}
-        onClick={handleBarToggle}
-      />
-      {navLinks.map((link) => {
-        const isActive = isActivePath(
-          pathname,
-          link.href,
-          link.activePrefix
-        );
-        return (
-          <a
-            key={`${link.label}-${link.href}`}
-            href={link.href}
-            className="nav-icon-link"
-            aria-label={link.label}
-            title={link.title}
-            aria-current={isActive ? "page" : undefined}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              {link.icon}
-            </svg>
-            <span className="sr-only">{link.label}</span>
-          </a>
-        );
-      })}
-    </nav>
+    <header className={`site-header ${menuOpen ? "is-open" : ""}`}>
+      <div className="site-header-inner">
+        <a className="site-brand" href="/" aria-label="Lurk home">
+          <img src="/lurk-favicon.png" alt="" aria-hidden="true" />
+          <span className="site-brand-copy"><strong>Lurk</strong><small>Connect deliberately</small></span>
+        </a>
+
+        <button
+          type="button"
+          className="site-menu-toggle"
+          aria-label={menuOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded={menuOpen}
+          aria-controls="site-navigation"
+          onClick={() => setMenuOpen((current) => !current)}
+        >
+          <span /><span /><span />
+        </button>
+
+        <div className="site-navigation" id="site-navigation">
+          <nav className="site-nav-links" aria-label="Primary navigation">
+            {links.map((link) => {
+              const active = isActivePath(pathname, link.href);
+              return <a key={link.href} href={link.href} aria-current={active ? "page" : undefined}>{link.label}</a>;
+            })}
+          </nav>
+          <div className="site-nav-actions">
+            <button id="live-chat-bubble" className="site-live-button" type="button" data-live-chat-trigger onClick={() => setMenuOpen(false)}>
+              <span className="site-live-dot" aria-hidden="true" /> Live rooms
+            </button>
+            <a className={accountActive ? "site-account-link is-active" : "site-account-link"} href="/account">Account</a>
+            {isAdmin ? <a className="site-admin-link" href="/admin">Admin</a> : null}
+          </div>
+        </div>
+      </div>
+    </header>
   );
 }

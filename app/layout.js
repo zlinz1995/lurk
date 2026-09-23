@@ -5,10 +5,11 @@ import { resolveApiBase } from "./src/resolveApiBase.js";
 import ChatShell from "../components/ChatShell.jsx";
 import NavIconBar from "../components/NavIconBar.jsx";
 import LurkGuardActions from "../components/LurkGuardActions.jsx";
+import SiteFooter from "../components/SiteFooter.jsx";
 
 export const metadata = {
-  title: "Lurk",
-  description: "A lightweight, fast, open video board.",
+  title: "Lurk | Connect deliberately",
+  description: "Social spaces, live rooms, playables, and communication safety tools from Lurk.",
 };
 
 export default function RootLayout({ children }) {
@@ -37,6 +38,7 @@ export default function RootLayout({ children }) {
           ></video>
         </div>
         {children}
+        <SiteFooter />
         <ChatShell />
         <aside
           className="chat-panel-container glass-panel"
