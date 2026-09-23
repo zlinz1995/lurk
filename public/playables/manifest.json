@@ -1,7 +1,19 @@
 {
   "version": 1,
-  "updatedAt": "2026-02-24T00:00:00Z",
+  "updatedAt": "2026-09-23T00:00:00Z",
   "games": [
+    {
+      "id": "lurkguard-security-challenges",
+      "title": "LurkGuard Security Challenges",
+      "description": "Five quick decisions covering phishing, recovery, privacy, device security, and incident response.",
+      "author": "LurkGuard",
+      "path": "/playables-assets/lurkguard-security-challenges/index.html",
+      "thumbnail": "/playables-assets/lurkguard-security-challenges/thumb.svg",
+      "orientation": "landscape",
+      "minPlayers": 1,
+      "maxPlayers": 1,
+      "tags": ["security", "learning", "privacy", "lurkguard"]
+    },
     {
       "id": "pong",
       "title": "Neon Pong",

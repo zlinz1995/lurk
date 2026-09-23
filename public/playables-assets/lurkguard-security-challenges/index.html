@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LurkGuard Security Challenges</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="challenge-shell">
+      <header class="challenge-header">
+        <div class="brand-lockup">
+          <div class="brand-shield" aria-hidden="true">
+            <svg viewBox="0 0 64 72"><path d="M32 3 57 12v20c0 17-10 30-25 37C17 62 7 49 7 32V12L32 3Z"/><path d="m21 35 7 7 15-17"/></svg>
+          </div>
+          <div>
+            <span class="eyebrow">LurkGuard training lab</span>
+            <h1>Security Challenges</h1>
+          </div>
+        </div>
+        <div class="score-card" aria-live="polite">
+          <span>Score</span>
+          <strong id="score">0</strong><small>/ 100</small>
+        </div>
+      </header>
+
+      <section class="progress-area" aria-label="Challenge progress">
+        <div class="progress-meta">
+          <span id="progress-label">Challenge 1 of 5</span>
+          <span id="best-score">Best: —</span>
+        </div>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <div id="category-track" class="category-track" aria-hidden="true"></div>
+      </section>
+
+      <section id="intro-panel" class="intro-panel">
+        <div class="intro-copy">
+          <span class="status-pill">5 scenarios · about 4 minutes</span>
+          <h2>Practice the decisions that protect an account.</h2>
+          <p>Each scenario gives immediate feedback and a practical reason. This is a simulation—never enter real passwords, recovery codes, or personal information.</p>
+          <button id="start-button" class="primary-button" type="button">Start challenge</button>
+        </div>
+        <div class="skill-grid" aria-label="Skills covered">
+          <span>Phishing</span><span>Recovery</span><span>Privacy</span><span>Device safety</span><span>Incident response</span>
+        </div>
+      </section>
+
+      <section id="question-panel" class="question-panel" hidden>
+        <div class="scenario-context">
+          <span id="category" class="category-pill">Phishing recognition</span>
+          <span id="difficulty" class="difficulty">Foundations</span>
+        </div>
+        <h2 id="question">Question</h2>
+        <p id="scenario" class="scenario"></p>
+        <div id="answers" class="answer-list" role="radiogroup" aria-labelledby="question"></div>
+        <div id="feedback" class="feedback" role="status" aria-live="polite" hidden>
+          <div id="feedback-icon" class="feedback-icon" aria-hidden="true"></div>
+          <div><strong id="feedback-title"></strong><p id="feedback-copy"></p></div>
+        </div>
+        <div class="question-actions">
+          <span id="selection-help">Choose the safest response.</span>
+          <button id="next-button" class="primary-button" type="button" disabled>Check answer</button>
+        </div>
+      </section>
+
+      <section id="result-panel" class="result-panel" hidden>
+        <div id="result-ring" class="result-ring"><strong id="final-score">0</strong><span>/100</span></div>
+        <div class="result-copy">
+          <span class="eyebrow">Challenge complete</span>
+          <h2 id="result-title">Security instincts checked.</h2>
+          <p id="result-message"></p>
+          <div id="result-breakdown" class="result-breakdown"></div>
+          <button id="restart-button" class="primary-button" type="button">Try again</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="/playables/sdk.js"></script>
+    <script src="game.js"></script>
+  </body>
+</html>

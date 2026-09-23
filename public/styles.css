@@ -3459,6 +3459,423 @@ a {
   --r-lg: 18px;
 }
 
+/* ======================================================================
+   LIVE ROOMS — FULL STAGE EXPERIENCE
+   ====================================================================== */
+
+.chat-panel-container.lurk-room-panel {
+  inset: 72px 18px 18px;
+  width: auto;
+  max-height: none;
+  min-height: 0;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(0, 198, 255, 0.1), transparent 30%),
+    rgba(3, 10, 20, 0.98);
+  border: 1px solid rgba(75, 211, 255, 0.28);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.72), 0 0 34px rgba(0, 183, 255, 0.13);
+}
+
+.lurk-room-panel .chat-header {
+  min-height: 58px;
+  padding: 0 20px;
+  background: rgba(3, 10, 20, 0.94);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lurk-room-panel .chat-header-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.98rem;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.lurk-room-panel .chat-header-close {
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: rgba(230, 244, 255, 0.7);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.lurk-room-panel > .chat-participant-list-container {
+  display: none;
+}
+
+.lurk-room-panel .chat-panel-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 350px);
+  grid-template-areas:
+    "intro intro"
+    "toolbar setup"
+    "stage setup"
+    "text setup"
+    "log setup";
+  grid-template-rows: auto auto minmax(360px, 1fr) auto auto;
+  gap: 14px;
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+  background: transparent;
+}
+
+.lurk-room-panel .chat-room-intro {
+  grid-area: intro;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 4px 4px 12px;
+}
+
+.lurk-room-panel .chat-room-eyebrow,
+.lurk-room-panel .chat-setup-kicker {
+  display: block;
+  color: #43d8ff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.lurk-room-panel .chat-room-intro h2 {
+  margin: 2px 0 3px;
+  color: #effaff;
+  font-size: clamp(1.35rem, 2vw, 1.8rem);
+  letter-spacing: -0.04em;
+}
+
+.lurk-room-panel .chat-room-intro p,
+.lurk-room-panel .chat-setup-heading p {
+  margin: 0;
+  color: rgba(220, 237, 249, 0.68);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.lurk-room-panel .chat-room-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lurk-room-panel .chat-room-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(232, 246, 255, 0.75);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.lurk-room-panel .chat-room-steps span {
+  display: grid;
+  width: 19px;
+  height: 19px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 190, 255, 0.18);
+  color: #77e4ff;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.lurk-room-panel .chat-video-toolbar {
+  grid-area: toolbar;
+  min-height: 54px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(9, 20, 34, 0.72);
+}
+
+.lurk-room-panel .chat-video-room-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.lurk-room-panel .chat-video-room-heading strong {
+  color: #effaff;
+  font-size: 0.86rem;
+}
+
+.lurk-room-panel .chat-video-button-row {
+  gap: 8px;
+}
+
+.lurk-room-panel .chat-video-link {
+  min-width: 74px;
+  padding: 8px 13px;
+  border: 1px solid rgba(54, 212, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(0, 183, 255, 0.12);
+  text-align: center;
+}
+
+.lurk-room-panel #chat-video-start:not([disabled]) {
+  color: #03101c;
+  background: linear-gradient(135deg, #63e6ff, #009dff);
+  border-color: transparent;
+  box-shadow: 0 8px 20px rgba(0, 174, 255, 0.22);
+}
+
+.lurk-room-panel .chat-video-toolbar-divider {
+  display: none;
+}
+
+.lurk-room-panel .chat-setup-panel {
+  grid-area: setup;
+  align-self: stretch;
+  min-height: 0;
+  padding: 16px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  background: rgba(7, 16, 29, 0.82);
+}
+
+.lurk-room-panel .chat-setup-heading {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.lurk-room-panel .chat-setup-heading strong {
+  color: #effaff;
+  font-size: 1rem;
+}
+
+.lurk-room-panel .chat-video-label {
+  display: block;
+  margin-bottom: 7px;
+  color: rgba(226, 242, 253, 0.82);
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.lurk-room-panel .chat-video-label span {
+  color: rgba(226, 242, 253, 0.48);
+  font-weight: 500;
+}
+
+.lurk-room-panel .chat-video-input {
+  margin-bottom: 16px;
+}
+
+.lurk-room-panel .chat-mode-guide {
+  order: 1;
+  padding: 12px;
+}
+
+.lurk-room-panel .chat-room-label {
+  order: 2;
+  margin-top: 6px;
+  color: rgba(226, 242, 253, 0.82);
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.lurk-room-panel .chat-room-row { order: 3; }
+.lurk-room-panel .chat-room-new-panel { order: 4; }
+.lurk-room-panel .chat-room-help { order: 5; }
+.lurk-room-panel .chat-room-list { order: 6; }
+.lurk-room-panel .lurkguard-actions { order: 7; }
+
+.lurk-room-panel .chat-room-row-compact {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.lurk-room-panel .chat-room-input-group {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.lurk-room-panel .chat-room-button {
+  min-height: 38px;
+}
+
+.lurk-room-panel .chat-room-status {
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: rgba(0, 188, 255, 0.08);
+  color: #a5ebff;
+  font-weight: 700;
+}
+
+.lurk-room-panel .chat-video-grid {
+  grid-area: stage;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-height: 360px;
+}
+
+.lurk-room-panel .chat-video-card,
+.lurk-room-panel .chat-video-remote-wrapper {
+  min-height: 360px;
+  height: 100%;
+  border-radius: 18px;
+  border: 1px solid rgba(70, 211, 255, 0.2);
+  background:
+    radial-gradient(circle at 50% 45%, rgba(0, 180, 255, 0.12), transparent 46%),
+    #06101d;
+}
+
+.lurk-room-panel .chat-video-remote-wrapper {
+  padding: 0;
+  overflow: hidden;
+}
+
+.lurk-room-panel .chat-stage-label {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 4;
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(1, 8, 16, 0.72);
+  color: rgba(239, 250, 255, 0.8);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.lurk-room-panel .chat-video-card .chat-video-placeholder {
+  display: flex;
+}
+
+.lurk-room-panel .chat-video-chip {
+  top: 48px;
+}
+
+.lurk-room-panel .chat-video-remote-grid {
+  height: 100%;
+  min-height: 100%;
+}
+
+.lurk-room-panel .chat-video-controls {
+  padding: 30px 14px 14px;
+}
+
+.lurk-room-panel .chat-video-control {
+  min-width: 54px;
+  padding: 8px 10px;
+}
+
+.lurk-room-panel .chat-room-text-chat {
+  grid-area: text;
+  display: grid;
+  gap: 8px;
+}
+
+.lurk-room-panel .chat-text-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.lurk-room-panel .chat-text-heading strong {
+  color: #effaff;
+  font-size: 0.84rem;
+}
+
+.lurk-room-panel .chat-text-heading span {
+  color: rgba(220, 237, 249, 0.56);
+  font-size: 0.72rem;
+}
+
+.lurk-room-panel .chat-messages {
+  min-height: 82px;
+  max-height: 130px;
+  padding: 10px;
+}
+
+.lurk-room-panel .chat-video-log {
+  grid-area: log;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .chat-panel-container.lurk-room-panel {
+    inset: 64px 8px 8px;
+    border-radius: 18px;
+  }
+
+  .lurk-room-panel .chat-panel-content {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "intro"
+      "setup"
+      "toolbar"
+      "stage"
+      "text"
+      "log";
+    grid-template-rows: auto;
+    padding: 12px;
+  }
+
+  .lurk-room-panel .chat-room-intro {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .lurk-room-panel .chat-setup-panel {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .lurk-room-panel .chat-video-grid {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .lurk-room-panel .chat-video-card,
+  .lurk-room-panel .chat-video-remote-wrapper {
+    min-height: 280px;
+  }
+}
+
+@media (max-width: 560px) {
+  .lurk-room-panel .chat-current-users,
+  .lurk-room-panel .chat-room-steps,
+  .lurk-room-panel .chat-text-heading span,
+  .lurk-room-panel .chat-online-tracker-inline {
+    display: none;
+  }
+
+  .lurk-room-panel .chat-video-toolbar {
+    align-items: flex-end;
+  }
+
+  .lurk-room-panel .chat-room-row-compact {
+    grid-template-columns: 1fr;
+  }
+
+  .lurk-room-panel .chat-room-input-group {
+    grid-column: auto;
+  }
+
+  .lurk-room-panel .chat-reaction-tray {
+    display: none;
+  }
+}
+
 body {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: #050c13;

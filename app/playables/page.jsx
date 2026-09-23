@@ -133,8 +133,8 @@ export default function PlayablesPage() {
             <div className="playables-feature-text">
               <h2>Featured</h2>
               <p>
-                Kick things off with our first playable, built on the new SDK and
-                tuned for fast sessions.
+                Sharpen your instincts with a quick featured experience, then
+                explore the full Lurk playable collection below.
               </p>
               <a
                 className="playables-primary-action"

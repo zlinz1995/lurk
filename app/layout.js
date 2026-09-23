@@ -41,11 +41,11 @@ export default function RootLayout({ children }) {
         <SiteFooter />
         <ChatShell />
         <aside
-          className="chat-panel-container glass-panel"
+          className="chat-panel-container glass-panel lurk-room-panel"
           id="live-chat-panel"
           style={{ display: "none" }}
           aria-hidden="true"
-          aria-label="Live chat"
+          aria-label="Live Room"
           role="complementary"
         >
           <div className="chat-header">
@@ -55,7 +55,8 @@ export default function RootLayout({ children }) {
               aria-expanded="false"
               aria-controls="chat-widget-body"
             >
-              Live Chat
+              <span>Live Rooms</span>
+              <span className="chat-header-close">Close</span>
             </button>
             <div className="chat-current-users">
               <span className="chat-current-users-label">Online Now:</span>
@@ -75,8 +76,23 @@ export default function RootLayout({ children }) {
             </div>
           </div>
           <div className="chat-panel-content">
+            <section className="chat-room-intro" aria-labelledby="live-room-title">
+              <div>
+                <span className="chat-room-eyebrow">Live connection</span>
+                <h2 id="live-room-title">Live Room</h2>
+                <p>Choose a room, join it, then use the stage controls to talk face to face.</p>
+              </div>
+              <ol className="chat-room-steps" aria-label="How to join a Live Room">
+                <li><span>1</span>Choose a room</li>
+                <li><span>2</span>Join the room</li>
+                <li><span>3</span>Turn on mic or camera</li>
+              </ol>
+            </section>
             <section className="chat-video-toolbar">
-              <span className="chat-video-room-label">Video room</span>
+              <div className="chat-video-room-heading">
+                <span className="chat-video-room-label">Stage</span>
+                <strong id="chat-stage-status">Ready when you are</strong>
+              </div>
               <div
                 className="chat-online-tracker chat-online-tracker-inline"
                 role="status"
@@ -99,18 +115,24 @@ export default function RootLayout({ children }) {
                 </button>
               </div>
             </section>
-            <label htmlFor="chat-video-name" className="chat-video-label">
-              Display name (optional)
-            </label>
-            <input
-              id="chat-video-name"
-              type="text"
-              className="chat-video-input"
-              maxLength={32}
-              placeholder="Anonymous"
-              autoComplete="off"
-            />
-            <div className="chat-room-controls" aria-label="Room controls">
+            <aside className="chat-setup-panel" aria-label="Live Room setup">
+              <div className="chat-setup-heading">
+                <span className="chat-setup-kicker">Room setup</span>
+                <strong>Choose where to meet</strong>
+                <p>You can use the public lobby immediately. Member modes unlock private rooms.</p>
+              </div>
+              <label htmlFor="chat-video-name" className="chat-video-label">
+                1. Your display name <span>(optional)</span>
+              </label>
+              <input
+                id="chat-video-name"
+                type="text"
+                className="chat-video-input"
+                maxLength={32}
+                placeholder="Anonymous"
+                autoComplete="off"
+              />
+              <div className="chat-room-controls" aria-label="Room controls">
               <div className="chat-room-block">
                 <section className="chat-mode-guide" aria-label="Ways to Lurk">
                   <div className="chat-mode-guide-header">
@@ -256,9 +278,11 @@ export default function RootLayout({ children }) {
               <div id="chat-room-status" className="chat-room-status">
                 Public lobby
               </div>
-            </div>
+              </div>
+            </aside>
             <div className="chat-video-grid">
               <div className="chat-video-card chat-video-local">
+                <div className="chat-stage-label">Your camera</div>
                 <video id="chat-video-local" className="chat-video-element" autoPlay muted playsInline></video>
                 <div id="chat-video-local-placeholder" className="chat-video-placeholder chat-video-local-placeholder">
                   Camera preview
@@ -323,13 +347,18 @@ export default function RootLayout({ children }) {
                 </div>
               </div>
               <div className="chat-video-remote-wrapper">
+                <div className="chat-stage-label">People in this room</div>
                 <div id="chat-video-remote" className="chat-video-remote-grid"></div>
                 <div id="chat-video-placeholder" className="chat-video-placeholder chat-video-waiting">
                   <span>Looking for someone...</span>
                 </div>
               </div>
             </div>
-            <div className="chat">
+            <div className="chat chat-room-text-chat">
+              <div className="chat-text-heading">
+                <strong>Room chat</strong>
+                <span>Send a message without interrupting the conversation.</span>
+              </div>
               <div id="live-chat-messages" className="chat-log chat-messages"></div>
               <form id="live-chat-form" className="chat-input chat-input-row">
                 <input

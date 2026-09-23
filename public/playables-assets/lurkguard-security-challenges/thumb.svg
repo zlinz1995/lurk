@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">LurkGuard Security Challenges</title>
+  <desc id="desc">A neon blue shield surrounded by security challenge cards.</desc>
+  <defs>
+    <radialGradient id="bg" cx="28%" cy="18%" r="92%"><stop stop-color="#0b3552"/><stop offset=".48" stop-color="#041525"/><stop offset="1" stop-color="#010711"/></radialGradient>
+    <linearGradient id="shield" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#69ebff"/><stop offset="1" stop-color="#0088ff"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="12" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1200" height="675" fill="url(#bg)"/>
+  <g opacity=".17" stroke="#62ddff"><path d="M0 150h1200M0 300h1200M0 450h1200M200 0v675M400 0v675M600 0v675M800 0v675M1000 0v675"/></g>
+  <g transform="translate(105 115)">
+    <text x="0" y="25" fill="#47dfff" font-family="Arial,sans-serif" font-size="24" font-weight="700" letter-spacing="5">LURKGUARD TRAINING LAB</text>
+    <text x="0" y="105" fill="#eefbff" font-family="Arial,sans-serif" font-size="68" font-weight="800">Security</text>
+    <text x="0" y="176" fill="#eefbff" font-family="Arial,sans-serif" font-size="68" font-weight="800">Challenges</text>
+    <text x="0" y="226" fill="#92b5c8" font-family="Arial,sans-serif" font-size="25">Practice safer decisions in five quick scenarios.</text>
+    <g transform="translate(0 280)" font-family="Arial,sans-serif" font-size="20" fill="#ccecf8">
+      <rect width="175" height="48" rx="24" fill="#0a273a" stroke="#22506b"/><text x="27" y="31">PHISHING</text>
+      <rect x="190" width="175" height="48" rx="24" fill="#0a273a" stroke="#22506b"/><text x="217" y="31">RECOVERY</text>
+      <rect x="380" width="155" height="48" rx="24" fill="#0a273a" stroke="#22506b"/><text x="413" y="31">PRIVACY</text>
+    </g>
+  </g>
+  <g transform="translate(770 95)" filter="url(#glow)">
+    <path d="M155 0 300 52v121c0 111-57 195-145 238C67 368 10 284 10 173V52L155 0Z" fill="#021521" stroke="url(#shield)" stroke-width="13"/>
+    <path d="m91 188 44 45 86-103" fill="none" stroke="#dffbff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g transform="translate(760 535)" font-family="Arial,sans-serif">
+    <rect width="330" height="68" rx="34" fill="url(#shield)"/>
+    <text x="58" y="44" fill="#02101a" font-size="28" font-weight="800">START CHALLENGE</text>
+  </g>
+</svg>
