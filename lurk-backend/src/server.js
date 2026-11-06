@@ -33,6 +33,8 @@ const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 10_000);
 const require = createRequire(import.meta.url);
 
 const app = express();
+const { default: woodworking } = await import('./woodworking.js');
+app.use('/woodworking', woodworking);
 const server = http.createServer(app);
 
 if (Number.isFinite(KEEP_ALIVE_TIMEOUT_MS)) {
